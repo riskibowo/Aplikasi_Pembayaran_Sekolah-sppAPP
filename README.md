@@ -1,93 +1,67 @@
-Aplikasi Pembayaran Sekolah
-Ini adalah aplikasi SPP (Pembayaran Sekolah) full-stack yang dibangun menggunakan React (Frontend) dan FastAPI (Backend) dengan database MongoDB.
+# Aplikasi Pembayaran Sekolah (README)
 
-🚀 Kebutuhan Sistem
-Sebelum memulai, pastikan Anda telah menginstal perangkat lunak berikut:
+Panduan instalasi dan menjalankan proyek.
 
-Python (versi 3.10+)
+## 💻 Kebutuhan
+* Git
+* Python 3.10+
+* Node.js 18+
+* **MongoDB Community Server** (Pastikan servis sudah terinstal dan **berjalan**).
 
-Node.js (versi 18+)
+---
 
-Git
+## 🚀 Backend (API)
 
-MongoDB Community Server (Wajib terinstal dan servisnya berjalan)
+1.  **Masuk ke folder backend & buat venv:**
+    ```bash
+    cd backend
+    python -m venv venv
+    .\venv\Scripts\activate
+    ```
+2.  **(Hanya Windows) Perbaikan `jq`:**
+    Buka `requirements.txt` dan **hapus** baris yang berisi `jq==1.10.0`.
 
-⚙️ Instalasi dan Menjalankan Proyek
-1. Kloning Repositori
-Bash
+3.  **Instal dependensi Python:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+4.  **Jalankan server (Biarkan terminal ini terbuka):**
+    ```bash
+    uvicorn server:app --reload
+    ```
+    *Backend berjalan di `http://1227.0.0.1:8000`.*
 
-git clone https://github.com/riskibowo/Aplikasi_Pembayaran_Sekolah.git
-cd Aplikasi_Pembayaran_Sekolah
-2. Backend (FastAPI & MongoDB)
-Navigasi ke folder backend
+---
 
-Bash
+## 🖥️ Frontend (Aplikasi Web)
 
-cd backend
-Buat dan aktifkan virtual environment
+1.  **Buka Terminal BARU.**
+2.  **Masuk ke folder frontend:**
+    ```bash
+    cd frontend
+    ```
+3.  **Atur Alamat API:**
+    Buat *file* baru bernama `.env` di dalam folder `frontend` dan isi dengan:
+    ```.env
+    REACT_APP_BACKEND_URL=[http://127.0.0.1:8000](http://127.0.0.1:8000)
+    ```
+4.  **Instal dependensi Node.js (termasuk perbaikan):**
+    Jalankan dua perintah ini secara berurutan:
+    ```bash
+    npm install --legacy-peer-deps
+    npm install ajv@6
+    ```
+5.  **Jalankan server (Biarkan terminal ini terbuka):**
+    ```bash
+    npm run start
+    ```
+    *Aplikasi berjalan di `http://localhost:3000`.*
 
-Bash
+---
 
-# Membuat venv
-python -m venv venv
+## 🔑 Login
 
-# Mengaktifkan venv (Windows)
-.\venv\Scripts\activate
-Instal dependensi
+Buka `http://localhost:3000` di browser Anda.
 
-Catatan Windows: Instalasi mungkin gagal pada paket jq. Jika ya, buka file requirements.txt, hapus baris jq==1.10.0, simpan, lalu jalankan perintah di bawah ini.
-
-Bash
-
-pip install -r requirements.txt
-Pastikan MongoDB Berjalan Pastikan servis MongoDB Anda sudah berjalan (dapat diperiksa melalui aplikasi Services di Windows).
-
-Jalankan server backend File utama dalam proyek ini adalah server.py.
-
-Bash
-
-uvicorn server:app --reload
-Server backend akan berjalan di http://127.0.0.1:8000. Biarkan terminal ini tetap terbuka.
-
-3. Frontend (React)
-Buka terminal BARU (Biarkan terminal backend tetap berjalan).
-
-Navigasi ke folder frontend
-
-Bash
-
-# (Jika Anda di folder 'backend', keluar dulu)
-# cd ..
-cd frontend
-Konfigurasi Alamat API (PENTING) Buat file baru di dalam folder frontend bernama .env. Salin dan tempelkan baris berikut ke dalamnya. Ini untuk memberitahu frontend agar terhubung ke backend lokal Anda, bukan ke server online.
-
-Cuplikan kode
-
-REACT_APP_BACKEND_URL=http://127.0.0.1:8000
-Instal dependensi Node.js Proyek ini memiliki beberapa konflik dependensi. Gunakan --legacy-peer-deps untuk mengabaikannya.
-
-Bash
-
-npm install --legacy-peer-deps
-Perbaikan Error ajv Setelah instalasi, jalankan perintah ini untuk memperbaiki masalah kompatibilitas ajv yang dapat menyebabkan aplikasi crash.
-
-Bash
-
-npm install ajv@6
-Jalankan server frontend
-
-Bash
-
-npm run start
-Server frontend akan berjalan di http://localhost:3000.
-
-🔑 Menggunakan Aplikasi
-Akses Frontend: Buka http://localhost:3000 di browser Anda.
-
-Akun Admin: Saat pertama kali dijalankan, backend akan secara otomatis membuat akun admin di database MongoDB (spp_db).
-
-Gunakan kredensial berikut untuk login:
-
-Username: admin
-
-Password: admin123
+* **Username:** `admin`
+* **Password:** `admin123`
