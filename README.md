@@ -65,3 +65,4 @@ Buka `http://localhost:3000` di browser Anda.
 
 * **Username:** `admin`
 * **Password:** `admin123`
+<img width="1919" height="931" alt="image" src="https://github.com/user-attachments/assets/132fef0b-42fe-4b7d-aa92-a55939af9863" />
