@@ -4,13 +4,16 @@ import { API, AuthContext } from '../../App';
 import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { History, CheckCircle } from 'lucide-react';
+import { History, CheckCircle, Download } from 'lucide-react'; // Ditambahkan: Download
+import { Button } from '@/components/ui/button'; // Ditambahkan: Button
+import { toast } from 'sonner'; // Ditambahkan: toast
 
 const StudentPayments = () => {
   const { user } = useContext(AuthContext);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Ini adalah fungsi untuk mengambil data, sudah ada di file asli Anda
   useEffect(() => {
     if (user?.id) {
       fetchPayments();
@@ -23,8 +26,46 @@ const StudentPayments = () => {
       setPayments(response.data);
     } catch (error) {
       console.error('Error fetching payments:', error);
+      toast.error('Gagal memuat riwayat pembayaran'); // Ditambahkan: toast error
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Ini adalah fungsi baru untuk mengunduh kuitansi (versi sudah diperbaiki)
+  const handleDownloadReceipt = async (payment) => {
+    // 1. Pengecekan status
+    if (payment.status !== 'diterima') {
+      toast.error("Kuitansi hanya dapat dicetak untuk pembayaran yang telah diterima.");
+      return;
+    }
+    
+    const billId = payment.id_tagihan;
+    
+    // 2. Pengecekan billId (ini perbaikan dari error sebelumnya)
+    if (!billId) {
+      toast.error("ID Tagihan tidak ditemukan untuk pembayaran ini.");
+      return;
+    }
+
+    const toastId = toast.loading("Membuat kuitansi...");
+    try {
+      const response = await axios.get(`${API}/receipt/bill/${billId}`, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      // Gunakan data dari bill dan siswa untuk nama file
+      link.setAttribute('download', `kuitansi_${user.nis}_${payment.tagihan?.bulan}_${payment.tagihan?.tahun}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      
+      toast.success('Kuitansi berhasil diunduh', { id: toastId });
+    } catch (error) {
+      toast.error('Gagal mengunduh kuitansi. Pembayaran mungkin belum dikonfirmasi.', { id: toastId });
     }
   };
 
@@ -38,6 +79,7 @@ const StudentPayments = () => {
     );
   }
 
+  // Ini fungsi formatDate dari file asli Anda
   const formatDate = (dateStr) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString('id-ID', { 
@@ -80,6 +122,8 @@ const StudentPayments = () => {
                       <TableHead>Tahun</TableHead>
                       <TableHead>Jumlah</TableHead>
                       <TableHead>Status</TableHead>
+                      {/* Ditambahkan: Kolom "Aksi" */}
+                      <TableHead className="text-right">Aksi</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -90,9 +134,31 @@ const StudentPayments = () => {
                         <TableCell>{payment.tagihan?.tahun}</TableCell>
                         <TableCell className="font-semibold text-green-700">Rp {payment.jumlah.toLocaleString('id-ID')}</TableCell>
                         <TableCell>
-                          <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">
-                            {payment.status.toUpperCase()}
+                          {/* Diperbarui: Logika untuk Status */}
+                          <span
+                            className={`px-3 py-1 rounded-full text-sm font-medium ${
+                              payment.status === 'diterima'
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-purple-100 text-purple-700'
+                            }`}
+                          >
+                            {payment.status === 'diterima' ? 'DITERIMA' : 'PENDING'}
                           </span>
+                        </TableCell>
+                        {/* Ditambahkan: Tombol "Cetak Bukti" */}
+                        <TableCell className="text-right">
+                          <Button
+                            data-testid={`print-receipt-${payment.id}`}
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDownloadReceipt(payment)}
+                            // Ditambahkan: Logika disabled
+                            disabled={payment.status !== 'diterima'}
+                            className="flex items-center gap-1"
+                          >
+                            <Download className="w-3 h-3" />
+                            Cetak
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}

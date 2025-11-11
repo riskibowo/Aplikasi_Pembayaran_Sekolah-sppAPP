@@ -45,7 +45,9 @@ const StudentBills = () => {
         id_siswa: user.id,
         jumlah: selectedBill.jumlah
       });
-      toast.success('Pembayaran berhasil dicatat. Menunggu konfirmasi admin.');
+      // --- UBAH PESAN TOAST INI ---
+      toast.success('Permintaan pembayaran terkirim. Menunggu konfirmasi admin.');
+      // ---------------------------
       setShowPayment(false);
       fetchBills();
     } catch (error) {
@@ -64,6 +66,7 @@ const StudentBills = () => {
   }
 
   const unpaidBills = bills.filter((b) => b.status === 'belum');
+  const pendingBills = bills.filter((b) => b.status === 'menunggu_konfirmasi');
   const paidBills = bills.filter((b) => b.status === 'lunas');
 
   return (
@@ -74,7 +77,7 @@ const StudentBills = () => {
           <p className="text-gray-600">Daftar tagihan pembayaran SPP Anda</p>
         </div>
 
-        {/* Unpaid Bills */}
+       {/* Unpaid Bills */}
         {unpaidBills.length > 0 && (
           <Card className="border-0 shadow-lg border-l-4 border-l-red-500">
             <CardHeader>
@@ -106,6 +109,7 @@ const StudentBills = () => {
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
+                        {/* --- Tombol Bayar Sekarang --- */}
                         <Button
                           data-testid={`pay-bill-${bill.id}`}
                           size="sm"
@@ -123,6 +127,55 @@ const StudentBills = () => {
             </CardContent>
           </Card>
         )}
+
+        {/* --- TAMBAHKAN CARD BARU INI UNTUK "MENUNGGU KONFIRMASI" --- */}
+        {pendingBills.length > 0 && (
+          <Card className="border-0 shadow-lg border-l-4 border-l-purple-500">
+            <CardHeader>
+              <CardTitle className="text-purple-700 flex items-center space-x-2">
+                <History className="w-5 h-5" /> {/* Menggunakan ikon History */}
+                <span>Menunggu Konfirmasi ({pendingBills.length})</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Bulan</TableHead>
+                    <TableHead>Tahun</TableHead>
+                    <TableHead>Jumlah</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Aksi</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pendingBills.map((bill) => (
+                    <TableRow key={bill.id} data-testid={`pending-bill-${bill.id}`}>
+                      <TableCell className="font-medium">{bill.bulan}</TableCell>
+                      <TableCell>{bill.tahun}</TableCell>
+                      <TableCell className="font-semibold text-gray-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
+                      <TableCell>
+                        <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
+                          MENUNGGU KONFIRMASI
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          disabled
+                          className="bg-gray-300"
+                        >
+                          Menunggu...
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+        {/* ----------------------------------------------------------- */}
 
         {/* Paid Bills */}
         <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
@@ -187,8 +240,10 @@ const StudentBills = () => {
               </div>
               <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
                 <p className="text-sm text-gray-700">
-                  <strong>Catatan:</strong> Pembayaran akan dicatat dan menunggu konfirmasi dari admin. 
-                  Notifikasi WhatsApp akan dikirim setelah pembayaran dikonfirmasi.
+                  {/* --- UBAH TEKS INI --- */}
+                  <strong>Catatan:</strong> Pembayaran Anda akan dicatat dan statusnya berubah menjadi "Menunggu Konfirmasi".
+                  Admin akan memverifikasi pembayaran Anda.
+                  {/* ------------------- */}
                 </p>
               </div>
             </div>

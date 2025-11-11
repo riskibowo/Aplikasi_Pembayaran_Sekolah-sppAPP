@@ -107,7 +107,7 @@ const AdminBills = () => {
                 <SelectContent>
                   <SelectItem value="all">Semua Status</SelectItem>
                   <SelectItem value="belum">Belum Lunas</SelectItem>
-                  <SelectItem value="lunas">Lunas</SelectItem>
+                  <SelectItem value="menunggu_konfirmasi">Menunggu Konfirmasi</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -148,17 +148,22 @@ const AdminBills = () => {
                         <TableCell>{bill.tahun}</TableCell>
                         <TableCell className="font-semibold text-green-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
                         <TableCell>
+                          {/* --- LOGIKA TAMPILAN STATUS BARU --- */}
                           <span
                             className={`px-3 py-1 rounded-full text-sm font-medium ${
                               bill.status === 'lunas'
                                 ? 'bg-green-100 text-green-700'
+                                : bill.status === 'menunggu_konfirmasi'
+                                ? 'bg-purple-100 text-purple-700'
                                 : 'bg-yellow-100 text-yellow-700'
                             }`}
                           >
-                            {bill.status.toUpperCase()}
+                            {bill.status.toUpperCase().replace('_', ' ')}
                           </span>
+                          {/* ---------------------------------- */}
                         </TableCell>
                         <TableCell className="text-right">
+                          {/* --- LOGIKA TOMBOL AKSI BARU --- */}
                           {bill.status === 'belum' && (
                             <Button
                               data-testid={`confirm-bill-${bill.id}`}
@@ -167,12 +172,24 @@ const AdminBills = () => {
                               className="bg-green-600 hover:bg-green-700 text-white"
                             >
                               <CheckCircle className="w-4 h-4 mr-1" />
-                              Konfirmasi
+                              Konfirmasi Bayar
+                            </Button>
+                          )}
+                          {bill.status === 'menunggu_konfirmasi' && (
+                            <Button
+                              data-testid={`confirm-bill-online-${bill.id}`}
+                              size="sm"
+                              onClick={() => handleConfirm(bill.id, 'lunas')}
+                              className="bg-purple-600 hover:bg-purple-700 text-white"
+                            >
+                              <CheckCircle className="w-4 h-4 mr-1" />
+                              Setujui Pembayaran
                             </Button>
                           )}
                           {bill.status === 'lunas' && (
                             <span className="text-green-600 text-sm font-medium">✓ Lunas</span>
                           )}
+                          {/* ------------------------------- */}
                         </TableCell>
                       </TableRow>
                     ))

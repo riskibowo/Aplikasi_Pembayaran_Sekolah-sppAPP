@@ -2,7 +2,7 @@ import React, { useContext } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AuthContext } from '../App';
 import { Button } from '@/components/ui/button';
-import { School, LayoutDashboard, Users, FileText, LogOut, User, CreditCard, History } from 'lucide-react';
+import { School, LayoutDashboard, Users, FileText, LogOut, User, CreditCard, History, GraduationCap } from 'lucide-react';
 
 const Layout = ({ children }) => {
   const { user, logout } = useContext(AuthContext);
@@ -14,6 +14,9 @@ const Layout = ({ children }) => {
       return [
         { path: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { path: '/admin/students', label: 'Data Siswa', icon: Users },
+        { path: '/admin/bills', label: 'Kelola Tagihan', icon: CreditCard },
+        { path: '/admin/reports', label: 'Laporan', icon: FileText },
+        { path: '/admin/classes', label: 'Data Kelas', icon: GraduationCap },
         { path: '/admin/bills', label: 'Kelola Tagihan', icon: CreditCard },
         { path: '/admin/reports', label: 'Laporan', icon: FileText },
       ];

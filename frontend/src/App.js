@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+// 1. Import React sudah ditambahkan di sini
+import React, { useEffect, useState } from "react"; 
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import axios from "axios";
-import { Toaster } from "@/components/ui/sonner";
-import { toast } from "sonner";
+
+// 2. Impor 'Toaster' dan 'toast' digabung dari 'sonner' (INI PERBAIKAN PENTING)
+import { Toaster, toast } from "sonner"; 
 
 // Pages
 import LoginPage from "./pages/LoginPage";
@@ -11,6 +13,7 @@ import AdminDashboard from "./pages/admin/Dashboard";
 import AdminStudents from "./pages/admin/Students";
 import AdminBills from "./pages/admin/Bills";
 import AdminReports from "./pages/admin/Reports";
+import AdminClasses from "./pages/admin/Classes"; // Halaman baru kita
 import KepsekDashboard from "./pages/kepsek/Dashboard";
 import KepsekReports from "./pages/kepsek/Reports";
 import StudentDashboard from "./pages/student/Dashboard";
@@ -73,6 +76,7 @@ function App() {
             <Route path="/admin/students" element={user?.role === "admin" ? <AdminStudents /> : <Navigate to="/" />} />
             <Route path="/admin/bills" element={user?.role === "admin" ? <AdminBills /> : <Navigate to="/" />} />
             <Route path="/admin/reports" element={user?.role === "admin" ? <AdminReports /> : <Navigate to="/" />} />
+            <Route path="/admin/classes" element={user?.role === "admin" ? <AdminClasses /> : <Navigate to="/" />} />
             
             {/* Kepala Sekolah Routes */}
             <Route path="/kepsek/dashboard" element={user?.role === "kepsek" ? <KepsekDashboard /> : <Navigate to="/" />} />
@@ -85,11 +89,11 @@ function App() {
             <Route path="/siswa/payments" element={user?.role === "siswa" ? <StudentPayments /> : <Navigate to="/" />} />
           </Routes>
         </BrowserRouter>
-        <Toaster position="top-right" />
+        {/* PASTIKAN BARIS INI BENAR */}
+        <Toaster position="top-right" richColors />
       </div>
     </AuthContext.Provider>
   );
 }
 
-import React from "react";
 export default App;

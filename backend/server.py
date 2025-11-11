@@ -20,6 +20,8 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4, letter
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -53,6 +55,150 @@ def create_token(data: dict) -> str:
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
 # Models
+class ClassUpdate(BaseModel):
+    nama_kelas: str
+    nominal_spp: float
+
+@api_router.get("/receipt/bill/{bill_id}")
+async def get_payment_receipt(bill_id: str):
+    # 1. Cari tagihan (bill)
+    bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
+    if not bill:
+        raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
+        
+    # 2. Cari pembayaran (payment) berdasarkan id_tagihan
+    payment = await db.payments.find_one({"id_tagihan": bill_id}, {"_id": 0})
+    if not payment:
+        raise HTTPException(status_code=404, detail="Pembayaran untuk tagihan ini tidak ditemukan")
+
+    # 3. Cari data siswa
+    student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
+    if not student:
+        raise HTTPException(status_code=404, detail="Data siswa tidak ditemukan")
+
+    # 4. Buat PDF
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=(5*inch, 4*inch), leftMargin=0.5*inch, rightMargin=0.5*inch, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('Title', parent=styles['h1'], alignment=TA_CENTER, fontSize=16, spaceAfter=20, textColor=colors.HexColor('#1e3a8a'))
+    normal_style = ParagraphStyle('Normal', parent=styles['BodyText'], fontSize=10, alignment=TA_LEFT, spaceAfter=6)
+
+    elements.append(Paragraph("BUKTI PEMBAYARAN SPP", title_style))
+    elements.append(Paragraph(f"<b>SMK MEKAR MURNI</b>", ParagraphStyle('SubTitle', parent=styles['h2'], alignment=TA_CENTER, fontSize=10, spaceAfter=20)))
+
+    # Data Kuitansi
+    receipt_data = [
+        ["NIS", ":", student['nis']],
+        ["Nama Siswa", ":", student['nama']],
+        ["Kelas", ":", student['kelas']],
+        ["Tanggal Bayar", ":", datetime.fromisoformat(payment['tanggal_bayar']).strftime('%d %B %Y %H:%M')],
+        ["Pembayaran Bulan", ":", f"{bill['bulan']} {bill['tahun']}"],
+        ["Jumlah", ":", f"<b>Rp {bill['jumlah']:,.0f}</b>"],
+        ["Status", ":", "<b>LUNAS</b>"],
+    ]
+
+    table = Table(receipt_data, colWidths=[1.5*inch, 0.2*inch, 2.3*inch])
+    table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        # Style untuk <b>
+        ('FONTNAME', (2, 5), (2, 6), 'Helvetica-Bold'), 
+    ]))
+    
+    elements.append(table)
+    elements.append(Spacer(1, 0.5*inch))
+    elements.append(Paragraph("Terima kasih atas pembayaran Anda.", normal_style))
+
+    doc.build(elements)
+    buffer.seek(0)
+    
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=kuitansi_{student['nis']}_{bill['bulan']}_{bill['tahun']}.pdf"})
+
+@api_router.get("/reports/annual")
+async def get_annual_report():
+    # Ini adalah contoh agregasi MongoDB
+    pipeline = [
+        {
+            "$match": {"status": "lunas"}
+        },
+        {
+            "$project": {
+                "tahun": {
+                    "$year": {"$dateFromString": {"dateString": "$tanggal_bayar"}}
+                },
+                "jumlah": "$jumlah"
+            }
+        },
+        {
+            "$group": {
+                "_id": "$tahun",
+                "total_pemasukan": {"$sum": "$jumlah"}
+            }
+        },
+        {
+            "$sort": {"_id": 1} # Urutkan berdasarkan tahun
+        },
+        {
+            "$project": {
+                "tahun": "$_id",
+                "pemasukan": "$total_pemasukan",
+                "_id": 0
+            }
+        }
+    ]
+    
+    # Perlu motor v4+ untuk $dateFromString, jika tidak, lakukan manual
+    # Jika agregasi di atas gagal, gunakan cara manual:
+    payments = await db.payments.find({"status": "diterima"}, {"_id": 0}).to_list(1000)
+    annual_data = {}
+    for p in payments:
+        try:
+            # Pastikan tanggal_bayar adalah string ISO
+            payment_date = datetime.fromisoformat(p["tanggal_bayar"])
+            year = payment_date.year
+            if year not in annual_data:
+                annual_data[year] = 0
+            annual_data[year] += p["jumlah"]
+        except (TypeError, ValueError):
+            continue # Abaikan format tanggal yang salah
+
+    # Konversi ke format chart
+    chart_data = [{"tahun": year, "pemasukan": total} for year, total in sorted(annual_data.items())]
+    
+    # Ambil total untuk tahun ini saja
+    current_year_total = annual_data.get(datetime.now().year, 0)
+    
+    return {
+        "total_pemasukan_tahun_ini": current_year_total,
+        "chart_data": chart_data
+    }
+
+@api_router.put("/classes/{class_id}")
+async def update_class(class_id: str, class_data: ClassUpdate):
+    exists = await db.classes.find_one({"id": class_id})
+    if not exists:
+        raise HTTPException(status_code=404, detail="Kelas tidak ditemukan")
+    
+    updated_data = class_data.model_dump()
+    await db.classes.update_one({"id": class_id}, {"$set": updated_data})
+    return {"message": "Kelas berhasil diupdate"}
+
+@api_router.delete("/classes/{class_id}")
+async def delete_class(class_id: str):
+    # Perlu ditambahkan: Cek apakah ada siswa yang masih menggunakan kelas ini sebelum menghapus
+    student_exists = await db.students.find_one({"kelas": (await db.classes.find_one({"id": class_id}))["nama_kelas"]})
+    if student_exists:
+        raise HTTPException(status_code=400, detail="Tidak dapat menghapus, kelas masih digunakan oleh siswa.")
+
+    result = await db.classes.delete_one({"id": class_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Kelas tidak ditemukan")
+    return {"message": "Kelas berhasil dihapus"}
+
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -87,7 +233,9 @@ class Bill(BaseModel):
     bulan: str
     tahun: int
     jumlah: float
-    status: str = "belum"  # belum, lunas
+    # --- UBAH BARIS INI ---
+    status: str = "belum"  # belum, menunggu_konfirmasi, lunas
+    # ---------------------
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class Payment(BaseModel):
@@ -98,7 +246,8 @@ class Payment(BaseModel):
     tanggal_bayar: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metode: str = "transfer"
     jumlah: float
-    status: str = "diterima"
+    # --- UBAH BARIS INI ---
+    status: str = "pending" # pending, diterima
 
 # Request/Response Models
 class LoginRequest(BaseModel):
@@ -132,6 +281,10 @@ class PaymentCreate(BaseModel):
     id_tagihan: str
     id_siswa: str
     jumlah: float
+
+class ClassUpdate(BaseModel):
+    nama_kelas: str
+    nominal_spp: float
 
 # Auth dependency
 async def get_current_user(token: str):
@@ -341,33 +494,48 @@ async def generate_bills(bill_gen: BillGenerate):
 
 @api_router.put("/bills/{bill_id}/confirm")
 async def confirm_bill(bill_id: str, confirm: BillConfirm):
-    # Update bill status
+    # Dapatkan data tagihan
+    bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
+    if not bill:
+        raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
+
+    # Update status tagihan
     result = await db.bills.update_one(
         {"id": bill_id},
         {"$set": {"status": confirm.status}}
     )
     
     if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
+        # Mungkin statusnya tidak berubah, tapi kita tetap lanjut
+        pass
     
-    # If confirmed, create payment record
+    # Jika status diubah menjadi "lunas"
     if confirm.status == "lunas":
-        bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
-        if bill:
+        # Cek apakah sudah ada payment, jika belum, buat baru
+        existing_payment = await db.payments.find_one({"id_tagihan": bill_id})
+        
+        if not existing_payment:
+            # Buat catatan pembayaran baru
             payment = Payment(
                 id_tagihan=bill_id,
                 id_siswa=bill["id_siswa"],
                 jumlah=bill["jumlah"],
-                status="diterima"
+                status="diterima" # Langsung diterima karena dikonfirmasi admin
             )
             doc = payment.model_dump()
             doc['tanggal_bayar'] = doc['tanggal_bayar'].isoformat()
             await db.payments.insert_one(doc)
-            
-            # Mock WhatsApp notification
-            student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
-            if student:
-                logging.info(f"[MOCK WA] Pembayaran SPP {bill['bulan']} {bill['tahun']} sebesar Rp {bill['jumlah']:,.0f} telah diterima. Terima kasih! - SMK MEKAR MURNI. Kirim ke: {student['no_wa']}")
+        else:
+            # Jika payment sudah ada (dari alur siswa), update statusnya
+            await db.payments.update_one(
+                {"id_tagihan": bill_id},
+                {"$set": {"status": "diterima", "tanggal_bayar": datetime.now(timezone.utc).isoformat()}}
+            )
+
+        # Kirim notifikasi WA (Mock)
+        student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
+        if student:
+            logging.info(f"[MOCK WA] Pembayaran SPP {bill['bulan']} {bill['tahun']} sebesar Rp {bill['jumlah']:,.0f} telah DITERIMA. Terima kasih! - SMK MEKAR MURNI. Kirim ke: {student['no_wa']}")
     
     return {"message": "Status tagihan berhasil diupdate"}
 
@@ -393,35 +561,41 @@ async def get_payments(id_siswa: Optional[str] = None):
 
 @api_router.post("/payments")
 async def create_payment(payment_data: PaymentCreate):
-    # Check if bill exists and not paid
+    # Check if bill exists
     bill = await db.bills.find_one({"id": payment_data.id_tagihan}, {"_id": 0})
     if not bill:
         raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
     
+    # --- UBAH LOGIKA INI ---
     if bill["status"] == "lunas":
         raise HTTPException(status_code=400, detail="Tagihan sudah lunas")
+    if bill["status"] == "menunggu_konfirmasi":
+        raise HTTPException(status_code=400, detail="Tagihan ini sedang menunggu konfirmasi")
     
-    # Create payment
+    # Cek apakah sudah ada payment pending
+    existing_payment = await db.payments.find_one({"id_tagihan": payment_data.id_tagihan, "status": "pending"})
+    if existing_payment:
+        raise HTTPException(status_code=400, detail="Pembayaran untuk tagihan ini sudah dibuat dan sedang menunggu konfirmasi")
+
+    # Create payment dengan status pending
     payment = Payment(
         id_tagihan=payment_data.id_tagihan,
         id_siswa=payment_data.id_siswa,
         jumlah=payment_data.jumlah,
-        status="diterima"
+        status="pending" # Status diubah menjadi pending
     )
     doc = payment.model_dump()
     doc['tanggal_bayar'] = doc['tanggal_bayar'].isoformat()
     await db.payments.insert_one(doc)
     
-    # Update bill status
+    # Update bill status menjadi "menunggu_konfirmasi"
     await db.bills.update_one(
         {"id": payment_data.id_tagihan},
-        {"$set": {"status": "lunas"}}
+        {"$set": {"status": "menunggu_konfirmasi"}} # Status diubah
     )
     
-    # Mock WhatsApp notification
-    student = await db.students.find_one({"id": payment_data.id_siswa}, {"_id": 0})
-    if student:
-        logging.info(f"[MOCK WA] Pembayaran SPP {bill['bulan']} {bill['tahun']} sebesar Rp {payment_data.jumlah:,.0f} telah diterima. Terima kasih! - SMK MEKAR MURNI. Kirim ke: {student['no_wa']}")
+    # JANGAN kirim WA dulu di sini
+    # ---------------------------
     
     return payment
 
@@ -461,7 +635,40 @@ async def get_dashboard_stats():
         "siswa_menunggak": siswa_menunggak,
         "chart_data": chart_data
     }
+    
+@api_router.get("/reports/annual")
+async def get_annual_report():
+    # Ambil semua pembayaran yang statusnya diterima
+    payments = await db.payments.find({"status": "diterima"}, {"_id": 0}).to_list(1000)
+    annual_data = {}
 
+    current_year = datetime.now(timezone.utc).year
+    total_pemasukan_tahun_ini = 0
+
+    for p in payments:
+        try:
+            # Pastikan tanggal_bayar adalah string ISO
+            payment_date = datetime.fromisoformat(p["tanggal_bayar"])
+            year = payment_date.year
+
+            if year not in annual_data:
+                annual_data[year] = 0
+
+            annual_data[year] += p["jumlah"]
+
+            if year == current_year:
+                total_pemasukan_tahun_ini += p["jumlah"]
+
+        except (TypeError, ValueError):
+            continue # Abaikan format tanggal yang salah atau data lama
+
+    # Konversi ke format chart
+    chart_data = [{"tahun": year, "pemasukan": total} for year, total in sorted(annual_data.items())]
+
+    return {
+        "total_pemasukan_tahun_ini": total_pemasukan_tahun_ini,
+        "chart_data": chart_data
+    }
 # Reports
 @api_router.get("/reports/daily")
 async def get_daily_report():
@@ -606,7 +813,81 @@ async def export_excel(bulan: str, tahun: int):
     buffer.seek(0)
     
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}.xlsx"})
+@api_router.get("/receipt/bill/{bill_id}")
+async def get_payment_receipt(bill_id: str):
+    # 1. Cari tagihan (bill)
+    bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
+    if not bill:
+        raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
 
+    # 2. Cari pembayaran (payment) berdasarkan id_tagihan
+    payment = await db.payments.find_one({"id_tagihan": bill_id}, {"_id": 0})
+    if not payment:
+        # Jika tidak ada pembayaran, masih bisa cetak info tagihan jika sudah lunas (dibayar admin)
+        if bill["status"] != "lunas":
+            raise HTTPException(status_code=404, detail="Pembayaran untuk tagihan ini belum dikonfirmasi")
+        # Gunakan tanggal hari ini jika data payment tidak ada (misal dikonfirmasi manual admin)
+        payment_date_str = datetime.now(timezone.utc).isoformat()
+    else:
+        payment_date_str = payment["tanggal_bayar"]
+
+
+    # 3. Cari data siswa
+    student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
+    if not student:
+        raise HTTPException(status_code=404, detail="Data siswa tidak ditemukan")
+
+    # 4. Buat PDF
+    buffer = BytesIO()
+    # Ukuran kertas kuitansi custom (lebar 5 inch, tinggi 4 inch)
+    doc = SimpleDocTemplate(buffer, pagesize=(5*inch, 4*inch), leftMargin=0.5*inch, rightMargin=0.5*inch, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    elements = []
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('Title', parent=styles['h1'], alignment=TA_CENTER, fontSize=14, spaceAfter=14, textColor=colors.HexColor('#1e3a8a'))
+    normal_style = ParagraphStyle('Normal', parent=styles['BodyText'], fontSize=9, alignment=TA_LEFT, spaceAfter=6)
+
+    elements.append(Paragraph("BUKTI PEMBAYARAN SPP", title_style))
+    elements.append(Paragraph(f"<b>SMK MEKAR MURNI</b>", ParagraphStyle('SubTitle', parent=styles['h2'], alignment=TA_CENTER, fontSize=9, spaceAfter=14)))
+
+    # Data Kuitansi
+    try:
+        tanggal_bayar_formatted = datetime.fromisoformat(payment_date_str).strftime('%d %B %Y %H:%M')
+    except ValueError:
+        tanggal_bayar_formatted = payment_date_str # Fallback jika format salah
+
+    receipt_data = [
+        ["NIS", ":", student['nis']],
+        ["Nama Siswa", ":", student['nama']],
+        ["Kelas", ":", student['kelas']],
+        ["Tanggal Bayar", ":", tanggal_bayar_formatted],
+        ["Pembayaran Bulan", ":", f"{bill['bulan']} {bill['tahun']}"],
+        ["Jumlah", ":", f"<b>Rp {bill['jumlah']:,.0f}</b>"],
+        ["Status", ":", "<b>LUNAS</b>"],
+    ]
+
+    table = Table(receipt_data, colWidths=[1.5*inch, 0.2*inch, 2.3*inch])
+    table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('FONTNAME', (2, 5), (2, 6), 'Helvetica-Bold'), # Style untuk <b>
+    ]))
+
+    elements.append(table)
+    elements.append(Spacer(1, 0.3*inch))
+    elements.append(Paragraph("<i>Terima kasih atas pembayaran Anda.</i>", normal_style))
+
+    doc.build(elements)
+    buffer.seek(0)
+
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=kuitansi_{student['nis']}_{bill['bulan']}_{bill['tahun']}.pdf"})
+# ---------------------------
+
+# Student Portal Routes
+@api_router.get("/student/profile/{student_id}")
 # WhatsApp Mock
 @api_router.post("/whatsapp/send")
 async def send_whatsapp(nomor: str, pesan: str):
