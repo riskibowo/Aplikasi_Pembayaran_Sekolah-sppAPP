@@ -634,14 +634,23 @@ async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
 
 # Serve receipt file for a payment (admin or student)
 @api_router.get("/payments/{payment_id}/receipt")
-async def get_payment_receipt(payment_id: str):
+async def get_payment_receipt(payment_id: str, token: str):
+    # Require a valid token and allow only admin or owner student to access the receipt
+    user_payload = await get_current_user(token)
+
     payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
 
+    # Authorization: admin can access any receipt; student can access their own
+    role = user_payload.get("role")
+    user_id = user_payload.get("user_id")
+    if role != "admin" and user_id != payment.get("id_siswa"):
+        raise HTTPException(status_code=403, detail="Not authorized to access this receipt")
+
     receipt_path = payment.get('receipt_path')
     if not receipt_path:
-        raise HTTPException(status_code=404, detail="Receipt not uploaded")
+        raise HTTPException(status_code=404, detail="Receipt uploaded")
 
     file_path = Path(receipt_path)
     if not file_path.exists():

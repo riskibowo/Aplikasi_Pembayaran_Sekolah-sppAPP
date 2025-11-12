@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext } from 'react';
 import Layout from '../../components/Layout';
-import { API } from '../../App';
+import { API, AuthContext } from '../../App';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +16,9 @@ const AdminBills = () => {
   const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
   const [payments, setPayments] = useState([]);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const { token } = useContext(AuthContext);
   const [showGenerate, setShowGenerate] = useState(false);
   const [filterStatus, setFilterStatus] = useState('all');
   const [generateData, setGenerateData] = useState({
@@ -212,7 +215,20 @@ const AdminBills = () => {
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      onClick={() => window.open(`${API.replace('/api','')}/api/payments/${payment.id}/receipt`, '_blank')}
+                                      onClick={async () => {
+                                        try {
+                                          const resp = await axios.get(`${API}/payments/${payment.id}/receipt`, {
+                                            params: { token },
+                                            responseType: 'blob'
+                                          });
+                                          const url = window.URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }));
+                                          setPreviewUrl(url);
+                                          setShowPreview(true);
+                                        } catch (err) {
+                                          toast.error('Gagal membuka bukti pembayaran');
+                                          console.error(err);
+                                        }
+                                      }}
                                       className="bg-white"
                                     >
                                       <Download className="w-4 h-4 mr-1" />
@@ -236,6 +252,26 @@ const AdminBills = () => {
             </div>
           </CardContent>
         </Card>
+      
+          {/* Preview Dialog for PDF receipt */}
+          <Dialog open={showPreview} onOpenChange={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>
+            <DialogContent className="sm:max-w-3xl w-full h-[80vh]">
+              <DialogHeader>
+                <DialogTitle>Bukti Pembayaran</DialogTitle>
+              </DialogHeader>
+              <div className="h-[70vh]">
+                {previewUrl ? (
+                  <iframe src={previewUrl} title="Bukti Pembayaran" className="w-full h-full" />
+                ) : (
+                  <p className="text-center text-gray-500">Memuat...</p>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>Tutup</Button>
+                <Button onClick={() => { if (previewUrl) { const link = document.createElement('a'); link.href = previewUrl; link.download = 'bukti_pembayaran.pdf'; document.body.appendChild(link); link.click(); link.remove(); } }} className="bg-blue-900">Unduh</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
       </div>
 
       {/* Generate Dialog */}
