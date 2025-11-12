@@ -10,6 +10,9 @@ body {
         sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Cross-browser text size adjust to avoid unexpected zooming on mobile */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
 }
 
 code {
@@ -112,4 +115,16 @@ code {
         border-top-color: inherit;
         border-bottom-color: inherit;
     }
+}
+
+/* Vendor fallbacks for better cross-browser compatibility */
+[data-sonner-toast][data-swiped=true] {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* Add webkit prefixed backdrop-filter support where Tailwind utilities are used */
+.backdrop-blur-sm {
+    -webkit-backdrop-filter: var(--tw-backdrop-blur, none);
+    backdrop-filter: var(--tw-backdrop-blur, none);
 }

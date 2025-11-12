@@ -4,7 +4,8 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import axios from "axios";
 
-// 2. Impor 'Toaster' dan 'toast' digabung dari 'sonner' (INI PERBAIKAN PENTING)
+// 2. INI ADALAH PERBAIKAN PENTING:
+//    Impor Toaster dan toast langsung dari 'sonner'
 import { Toaster, toast } from "sonner"; 
 
 // Pages
@@ -13,7 +14,8 @@ import AdminDashboard from "./pages/admin/Dashboard";
 import AdminStudents from "./pages/admin/Students";
 import AdminBills from "./pages/admin/Bills";
 import AdminReports from "./pages/admin/Reports";
-import AdminClasses from "./pages/admin/Classes"; // Halaman baru kita
+// 3. Impor halaman baru yang kita buat
+import AdminClasses from "./pages/admin/Classes"; 
 import KepsekDashboard from "./pages/kepsek/Dashboard";
 import KepsekReports from "./pages/kepsek/Reports";
 import StudentDashboard from "./pages/student/Dashboard";
@@ -68,6 +70,8 @@ function App() {
     <AuthContext.Provider value={{ user, token, login, logout }}>
       <div className="App">
         <BrowserRouter>
+          {/* 4. Toaster hanya diletakkan SATU KALI di sini */}
+          <Toaster position="top-right" richColors /> 
           <Routes>
             <Route path="/" element={!user ? <LoginPage /> : <Navigate to={`/${user.role}/dashboard`} />} />
             
@@ -76,6 +80,7 @@ function App() {
             <Route path="/admin/students" element={user?.role === "admin" ? <AdminStudents /> : <Navigate to="/" />} />
             <Route path="/admin/bills" element={user?.role === "admin" ? <AdminBills /> : <Navigate to="/" />} />
             <Route path="/admin/reports" element={user?.role === "admin" ? <AdminReports /> : <Navigate to="/" />} />
+            {/* 5. Rute baru ditambahkan di sini */}
             <Route path="/admin/classes" element={user?.role === "admin" ? <AdminClasses /> : <Navigate to="/" />} />
             
             {/* Kepala Sekolah Routes */}
@@ -89,11 +94,11 @@ function App() {
             <Route path="/siswa/payments" element={user?.role === "siswa" ? <StudentPayments /> : <Navigate to="/" />} />
           </Routes>
         </BrowserRouter>
-        {/* PASTIKAN BARIS INI BENAR */}
-        <Toaster position="top-right" richColors />
+        {/* <Toaster> yang duplikat dihapus dari sini */}
       </div>
     </AuthContext.Provider>
   );
 }
 
+// 6. Import React di bagian bawah sudah dihapus
 export default App;

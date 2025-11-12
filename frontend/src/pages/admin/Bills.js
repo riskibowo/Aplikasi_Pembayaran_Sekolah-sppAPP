@@ -9,12 +9,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, CheckCircle, XCircle, Filter } from 'lucide-react';
+import { Plus, CheckCircle, XCircle, Filter, Download } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const AdminBills = () => {
   const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [payments, setPayments] = useState([]);
   const [showGenerate, setShowGenerate] = useState(false);
   const [filterStatus, setFilterStatus] = useState('all');
   const [generateData, setGenerateData] = useState({
@@ -28,7 +29,8 @@ const AdminBills = () => {
   ];
 
   useEffect(() => {
-    fetchBills();
+    // Fetch bills and payments in parallel to show receipts
+    Promise.all([fetchBills(), fetchPayments()]);
   }, []);
 
   const fetchBills = async () => {
@@ -39,6 +41,15 @@ const AdminBills = () => {
       toast.error('Gagal memuat data tagihan');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchPayments = async () => {
+    try {
+      const resp = await axios.get(`${API}/payments`);
+      setPayments(resp.data);
+    } catch (err) {
+      console.error('Error fetching payments', err);
     }
   };
 
@@ -176,15 +187,41 @@ const AdminBills = () => {
                             </Button>
                           )}
                           {bill.status === 'menunggu_konfirmasi' && (
-                            <Button
-                              data-testid={`confirm-bill-online-${bill.id}`}
-                              size="sm"
-                              onClick={() => handleConfirm(bill.id, 'lunas')}
-                              className="bg-purple-600 hover:bg-purple-700 text-white"
-                            >
-                              <CheckCircle className="w-4 h-4 mr-1" />
-                              Setujui Pembayaran
-                            </Button>
+                            <div className="flex items-center justify-end space-x-2">
+                              <Button
+                                data-testid={`confirm-bill-online-${bill.id}`}
+                                size="sm"
+                                onClick={() => handleConfirm(bill.id, 'lunas')}
+                                className="bg-purple-600 hover:bg-purple-700 text-white"
+                              >
+                                <CheckCircle className="w-4 h-4 mr-1" />
+                                Setujui Pembayaran
+                              </Button>
+                              {
+                                // find payment for this bill
+                                (() => {
+                                  const payment = payments.find(p => p.id_tagihan === bill.id);
+                                  if (!payment || !payment.receipt_path) {
+                                    return (
+                                      <Button size="sm" disabled className="bg-gray-200 text-gray-500">
+                                        Tidak ada bukti
+                                      </Button>
+                                    );
+                                  }
+                                  return (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => window.open(`${API.replace('/api','')}/api/payments/${payment.id}/receipt`, '_blank')}
+                                      className="bg-white"
+                                    >
+                                      <Download className="w-4 h-4 mr-1" />
+                                      Lihat Bukti
+                                    </Button>
+                                  );
+                                })()
+                              }
+                            </div>
                           )}
                           {bill.status === 'lunas' && (
                             <span className="text-green-600 text-sm font-medium">✓ Lunas</span>

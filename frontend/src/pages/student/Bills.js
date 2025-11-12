@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Label } from '@/components/ui/label';
 import { CheckCircle, XCircle, DollarSign } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
@@ -15,6 +16,7 @@ const StudentBills = () => {
   const [loading, setLoading] = useState(true);
   const [showPayment, setShowPayment] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
+  const [receiptFile, setReceiptFile] = useState(null);
 
   useEffect(() => {
     if (user?.id) {
@@ -40,15 +42,27 @@ const StudentBills = () => {
 
   const confirmPayment = async () => {
     try {
-      await axios.post(`${API}/payments`, {
+      // 1) Create payment record
+      const resp = await axios.post(`${API}/payments`, {
         id_tagihan: selectedBill.id,
         id_siswa: user.id,
         jumlah: selectedBill.jumlah
       });
-      // --- UBAH PESAN TOAST INI ---
-      toast.success('Permintaan pembayaran terkirim. Menunggu konfirmasi admin.');
-      // ---------------------------
+
+      const paymentId = resp.data.id;
+
+      // 2) If user provided a receipt file, upload it
+      if (receiptFile && paymentId) {
+        const formData = new FormData();
+        formData.append('file', receiptFile, receiptFile.name);
+        await axios.post(`${API}/payments/${paymentId}/upload_receipt`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      }
+
+      toast.success('Bukti pembayaran berhasil diunggah. Menunggu konfirmasi admin.');
       setShowPayment(false);
+      setReceiptFile(null);
       fetchBills();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Gagal melakukan pembayaran');
@@ -260,6 +274,17 @@ const StudentBills = () => {
               Konfirmasi Pembayaran
             </Button>
           </DialogFooter>
+          <div className="space-y-2">
+            <Label htmlFor="receipt">Upload Bukti Pembayaran (PDF)</Label>
+            <input
+              id="receipt"
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setReceiptFile(e.target.files[0])}
+              className="w-full"
+            />
+            <p className="text-xs text-gray-500">Unggah file PDF bukti transfer. File akan dikirim ke admin untuk verifikasi.</p>
+          </div>
         </DialogContent>
       </Dialog>
     </Layout>

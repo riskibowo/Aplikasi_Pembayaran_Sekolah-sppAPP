@@ -248,6 +248,7 @@ class Payment(BaseModel):
     jumlah: float
     # --- UBAH BARIS INI ---
     status: str = "pending" # pending, diterima
+    receipt_path: Optional[str] = None
 
 # Request/Response Models
 class LoginRequest(BaseModel):
@@ -598,6 +599,55 @@ async def create_payment(payment_data: PaymentCreate):
     # ---------------------------
     
     return payment
+
+
+# Upload receipt for a payment (student uploads PDF)
+@api_router.post("/payments/{payment_id}/upload_receipt")
+async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
+    # Validate payment exists
+    payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    # Accept only pdf for now
+    if file.content_type != 'application/pdf':
+        raise HTTPException(status_code=400, detail="Only PDF receipts are accepted")
+
+    receipts_dir = ROOT_DIR / 'receipts'
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"receipt_{payment_id}.pdf"
+    file_path = receipts_dir / filename
+
+    with open(file_path, 'wb') as f:
+        content = await file.read()
+        f.write(content)
+
+    # Update payment record with receipt path and set status to 'menunggu_konfirmasi'
+    await db.payments.update_one({"id": payment_id}, {"$set": {"receipt_path": str(file_path), "status": "menunggu_konfirmasi"}})
+
+    # Update corresponding bill status as well
+    await db.bills.update_one({"id": payment['id_tagihan']}, {"$set": {"status": "menunggu_konfirmasi"}})
+
+    return {"message": "Receipt uploaded"}
+
+
+# Serve receipt file for a payment (admin or student)
+@api_router.get("/payments/{payment_id}/receipt")
+async def get_payment_receipt(payment_id: str):
+    payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    receipt_path = payment.get('receipt_path')
+    if not receipt_path:
+        raise HTTPException(status_code=404, detail="Receipt not uploaded")
+
+    file_path = Path(receipt_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Receipt file not found on server")
+
+    return FileResponse(path=str(file_path), media_type='application/pdf', filename=file_path.name)
 
 # Dashboard Stats
 @api_router.get("/dashboard/stats")

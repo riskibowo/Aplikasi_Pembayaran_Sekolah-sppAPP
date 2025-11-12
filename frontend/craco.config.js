@@ -71,6 +71,16 @@ const webpackConfig = {
       return webpackConfig;
     },
   },
+
+  // Disable the webpack-dev-server client overlay iframe which injects an
+  // <iframe id="webpack-dev-server-client-overlay"> without a title attribute
+  // that can trigger accessibility warnings. CRA/craco will respect this
+  // devServer.client.overlay flag when starting the dev server.
+  devServer: {
+    client: {
+      overlay: false,
+    },
+  },
 };
 
 // Only add babel plugin if visual editing is enabled
