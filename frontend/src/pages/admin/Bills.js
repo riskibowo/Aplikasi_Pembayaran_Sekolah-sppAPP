@@ -3,13 +3,13 @@ import Layout from '../../components/Layout';
 import { API, AuthContext } from '../../App';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, CheckCircle, XCircle, Filter, Download } from 'lucide-react';
+import { Plus, CheckCircle, Filter, Download } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const AdminBills = () => {
@@ -18,6 +18,7 @@ const AdminBills = () => {
   const [payments, setPayments] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewType, setPreviewType] = useState(''); // State untuk menyimpan tipe file (gambar/pdf)
   const { token } = useContext(AuthContext);
   const [showGenerate, setShowGenerate] = useState(false);
   const [filterStatus, setFilterStatus] = useState('all');
@@ -32,7 +33,7 @@ const AdminBills = () => {
   ];
 
   useEffect(() => {
-    // Fetch bills and payments in parallel to show receipts
+    // Fetch bills dan payments secara paralel agar info pengirim bisa ditampilkan
     Promise.all([fetchBills(), fetchPayments()]);
   }, []);
 
@@ -162,7 +163,6 @@ const AdminBills = () => {
                         <TableCell>{bill.tahun}</TableCell>
                         <TableCell className="font-semibold text-green-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
                         <TableCell>
-                          {/* --- LOGIKA TAMPILAN STATUS BARU --- */}
                           <span
                             className={`px-3 py-1 rounded-full text-sm font-medium ${
                               bill.status === 'lunas'
@@ -174,10 +174,9 @@ const AdminBills = () => {
                           >
                             {bill.status.toUpperCase().replace('_', ' ')}
                           </span>
-                          {/* ---------------------------------- */}
                         </TableCell>
                         <TableCell className="text-right">
-                          {/* --- LOGIKA TOMBOL AKSI BARU --- */}
+                          {/* JIKA STATUS BELUM LUNAS (Bayar manual di admin) */}
                           {bill.status === 'belum' && (
                             <Button
                               data-testid={`confirm-bill-${bill.id}`}
@@ -189,60 +188,85 @@ const AdminBills = () => {
                               Konfirmasi Bayar
                             </Button>
                           )}
+
+                          {/* JIKA STATUS MENUNGGU KONFIRMASI (Ada pembayaran online) */}
                           {bill.status === 'menunggu_konfirmasi' && (
-                            <div className="flex items-center justify-end space-x-2">
-                              <Button
-                                data-testid={`confirm-bill-online-${bill.id}`}
-                                size="sm"
-                                onClick={() => handleConfirm(bill.id, 'lunas')}
-                                className="bg-purple-600 hover:bg-purple-700 text-white"
-                              >
-                                <CheckCircle className="w-4 h-4 mr-1" />
-                                Setujui Pembayaran
-                              </Button>
-                              {
-                                // find payment for this bill
-                                (() => {
-                                  const payment = payments.find(p => p.id_tagihan === bill.id);
-                                  if (!payment || !payment.receipt_path) {
+                            <div className="flex flex-col space-y-2">
+                              
+                              {/* --- Menampilkan Info Pengirim --- */}
+                              {(() => {
+                                const payment = payments.find(p => p.id_tagihan === bill.id);
+                                if (payment && (payment.nama_pengirim || payment.bank_asal)) {
+                                  return (
+                                    <div className="text-xs text-left text-gray-600 bg-yellow-50 p-2 rounded border border-yellow-200 mb-1">
+                                      <p><strong>Dari:</strong> {payment.nama_pengirim || '-'}</p>
+                                      <p><strong>Bank:</strong> {payment.bank_asal || '-'}</p>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
+                              {/* --------------------------------- */}
+
+                              <div className="flex items-center justify-end space-x-2">
+                                <Button
+                                  data-testid={`confirm-bill-online-${bill.id}`}
+                                  size="sm"
+                                  onClick={() => handleConfirm(bill.id, 'lunas')}
+                                  className="bg-purple-600 hover:bg-purple-700 text-white"
+                                >
+                                  <CheckCircle className="w-4 h-4 mr-1" />
+                                  Setujui Pembayaran
+                                </Button>
+                                {
+                                  // Tombol Lihat Bukti
+                                  (() => {
+                                    const payment = payments.find(p => p.id_tagihan === bill.id);
+                                    if (!payment || !payment.receipt_path) {
+                                      return (
+                                        <Button size="sm" disabled className="bg-gray-200 text-gray-500">
+                                          Tidak ada bukti
+                                        </Button>
+                                      );
+                                    }
                                     return (
-                                      <Button size="sm" disabled className="bg-gray-200 text-gray-500">
-                                        Tidak ada bukti
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={async () => {
+                                          try {
+                                            const resp = await axios.get(`${API}/payments/${payment.id}/receipt`, {
+                                              params: { token },
+                                              responseType: 'blob'
+                                            });
+                                            // Ambil tipe konten (image/jpeg atau application/pdf)
+                                            const contentType = resp.headers['content-type'];
+                                            const url = window.URL.createObjectURL(new Blob([resp.data], { type: contentType }));
+                                            
+                                            setPreviewUrl(url);
+                                            setPreviewType(contentType); 
+                                            setShowPreview(true);
+                                          } catch (err) {
+                                            toast.error('Gagal membuka bukti pembayaran');
+                                            console.error(err);
+                                          }
+                                        }}
+                                        className="bg-white"
+                                      >
+                                        <Download className="w-4 h-4 mr-1" />
+                                        Lihat Bukti
                                       </Button>
                                     );
-                                  }
-                                  return (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={async () => {
-                                        try {
-                                          const resp = await axios.get(`${API}/payments/${payment.id}/receipt`, {
-                                            params: { token },
-                                            responseType: 'blob'
-                                          });
-                                          const url = window.URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }));
-                                          setPreviewUrl(url);
-                                          setShowPreview(true);
-                                        } catch (err) {
-                                          toast.error('Gagal membuka bukti pembayaran');
-                                          console.error(err);
-                                        }
-                                      }}
-                                      className="bg-white"
-                                    >
-                                      <Download className="w-4 h-4 mr-1" />
-                                      Lihat Bukti
-                                    </Button>
-                                  );
-                                })()
-                              }
+                                  })()
+                                }
+                              </div>
                             </div>
                           )}
+                          
+                          {/* JIKA STATUS LUNAS */}
                           {bill.status === 'lunas' && (
                             <span className="text-green-600 text-sm font-medium">✓ Lunas</span>
                           )}
-                          {/* ------------------------------- */}
                         </TableCell>
                       </TableRow>
                     ))
@@ -253,22 +277,43 @@ const AdminBills = () => {
           </CardContent>
         </Card>
       
-          {/* Preview Dialog for PDF receipt */}
+          {/* Preview Dialog */}
           <Dialog open={showPreview} onOpenChange={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>
             <DialogContent className="sm:max-w-3xl w-full h-[80vh]">
               <DialogHeader>
                 <DialogTitle>Bukti Pembayaran</DialogTitle>
               </DialogHeader>
-              <div className="h-[70vh]">
+              <div className="h-[70vh] flex items-center justify-center bg-gray-100 rounded-md overflow-hidden">
                 {previewUrl ? (
-                  <iframe src={previewUrl} title="Bukti Pembayaran" className="w-full h-full" />
+                   previewType && previewType.startsWith('image/') ? (
+                    // Tampilan untuk Gambar
+                    <img 
+                      src={previewUrl} 
+                      alt="Bukti Pembayaran" 
+                      className="max-w-full max-h-full object-contain" 
+                    />
+                  ) : (
+                    // Tampilan untuk PDF
+                    <iframe src={previewUrl} title="Bukti Pembayaran" className="w-full h-full" />
+                  )
                 ) : (
                   <p className="text-center text-gray-500">Memuat...</p>
                 )}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>Tutup</Button>
-                <Button onClick={() => { if (previewUrl) { const link = document.createElement('a'); link.href = previewUrl; link.download = 'bukti_pembayaran.pdf'; document.body.appendChild(link); link.click(); link.remove(); } }} className="bg-blue-900">Unduh</Button>
+                <Button onClick={() => { 
+                  if (previewUrl) { 
+                    const link = document.createElement('a'); 
+                    link.href = previewUrl; 
+                    // Download sesuai ekstensi
+                    const ext = previewType === 'application/pdf' ? '.pdf' : '.jpg';
+                    link.download = `bukti_pembayaran${ext}`; 
+                    document.body.appendChild(link); 
+                    link.click(); 
+                    link.remove(); 
+                  } 
+                }} className="bg-blue-900">Unduh</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

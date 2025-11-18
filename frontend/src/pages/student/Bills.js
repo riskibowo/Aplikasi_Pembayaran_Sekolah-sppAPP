@@ -5,9 +5,10 @@ import axios from 'axios';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input'; // Import Input ditambahkan
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Label } from '@/components/ui/label';
-import { CheckCircle, XCircle, DollarSign } from 'lucide-react';
+import { CheckCircle, XCircle, DollarSign, History } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 
 const StudentBills = () => {
@@ -17,6 +18,10 @@ const StudentBills = () => {
   const [showPayment, setShowPayment] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
   const [receiptFile, setReceiptFile] = useState(null);
+  
+  // State baru untuk data pengirim
+  const [senderName, setSenderName] = useState('');
+  const [bankName, setBankName] = useState('');
 
   useEffect(() => {
     if (user?.id) {
@@ -37,21 +42,33 @@ const StudentBills = () => {
 
   const handlePay = (bill) => {
     setSelectedBill(bill);
+    // Reset form saat membuka dialog
+    setSenderName('');
+    setBankName('');
+    setReceiptFile(null);
     setShowPayment(true);
   };
 
   const confirmPayment = async () => {
+    // Validasi input
+    if (!senderName || !bankName) {
+      toast.error("Mohon lengkapi Nama Pemilik Rekening dan Bank Asal");
+      return;
+    }
+
     try {
-      // 1) Create payment record
+      // 1) Create payment record dengan data tambahan
       const resp = await axios.post(`${API}/payments`, {
         id_tagihan: selectedBill.id,
         id_siswa: user.id,
-        jumlah: selectedBill.jumlah
+        jumlah: selectedBill.jumlah,
+        nama_pengirim: senderName, // Kirim ke backend
+        bank_asal: bankName        // Kirim ke backend
       });
 
       const paymentId = resp.data.id;
 
-      // 2) If user provided a receipt file, upload it
+      // 2) Upload receipt
       if (receiptFile && paymentId) {
         const formData = new FormData();
         formData.append('file', receiptFile, receiptFile.name);
@@ -60,9 +77,8 @@ const StudentBills = () => {
         });
       }
 
-      toast.success('Bukti pembayaran berhasil diunggah. Menunggu konfirmasi admin.');
+      toast.success('Pembayaran berhasil dikirim. Menunggu verifikasi admin.');
       setShowPayment(false);
-      setReceiptFile(null);
       fetchBills();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Gagal melakukan pembayaran');
@@ -123,7 +139,6 @@ const StudentBills = () => {
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
-                        {/* --- Tombol Bayar Sekarang --- */}
                         <Button
                           data-testid={`pay-bill-${bill.id}`}
                           size="sm"
@@ -142,12 +157,12 @@ const StudentBills = () => {
           </Card>
         )}
 
-        {/* --- TAMBAHKAN CARD BARU INI UNTUK "MENUNGGU KONFIRMASI" --- */}
+        {/* Pending Bills */}
         {pendingBills.length > 0 && (
           <Card className="border-0 shadow-lg border-l-4 border-l-purple-500">
             <CardHeader>
               <CardTitle className="text-purple-700 flex items-center space-x-2">
-                <History className="w-5 h-5" /> {/* Menggunakan ikon History */}
+                <History className="w-5 h-5" />
                 <span>Menunggu Konfirmasi ({pendingBills.length})</span>
               </CardTitle>
             </CardHeader>
@@ -189,7 +204,6 @@ const StudentBills = () => {
             </CardContent>
           </Card>
         )}
-        {/* ----------------------------------------------------------- */}
 
         {/* Paid Bills */}
         <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
@@ -252,17 +266,44 @@ const StudentBills = () => {
                   </div>
                 </div>
               </div>
-              <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                <p className="text-sm text-gray-700">
-                  {/* --- UBAH TEKS INI --- */}
-                  <strong>Catatan:</strong> Pembayaran Anda akan dicatat dan statusnya berubah menjadi "Menunggu Konfirmasi".
-                  Admin akan memverifikasi pembayaran Anda.
-                  {/* ------------------- */}
-                </p>
+
+              {/* Input Data Pengirim */}
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="sender">Nama Pemilik Rekening</Label>
+                  <Input
+                    id="sender"
+                    type="text"
+                    placeholder="Contoh: Budi Santoso (Ayah)"
+                    value={senderName}
+                    onChange={(e) => setSenderName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bank">Bank Asal</Label>
+                  <Input
+                    id="bank"
+                    type="text"
+                    placeholder="Contoh: BRI / Dana / BCA"
+                    value={bankName}
+                    onChange={(e) => setBankName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="receipt">Upload Bukti Transfer</Label>
+                  <Input
+                    id="receipt"
+                    type="file"
+                    accept="image/*,application/pdf" // Izinkan Gambar dan PDF
+                    onChange={(e) => setReceiptFile(e.target.files[0])}
+                    className="cursor-pointer"
+                  />
+                  <p className="text-xs text-gray-500">Format: JPG, PNG, atau PDF. Pastikan foto jelas.</p>
+                </div>
               </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="mt-4">
             <Button variant="outline" onClick={() => setShowPayment(false)}>
               Batal
             </Button>
@@ -274,17 +315,6 @@ const StudentBills = () => {
               Konfirmasi Pembayaran
             </Button>
           </DialogFooter>
-          <div className="space-y-2">
-            <Label htmlFor="receipt">Upload Bukti Pembayaran (PDF)</Label>
-            <input
-              id="receipt"
-              type="file"
-              accept="application/pdf"
-              onChange={(e) => setReceiptFile(e.target.files[0])}
-              className="w-full"
-            />
-            <p className="text-xs text-gray-500">Unggah file PDF bukti transfer. File akan dikirim ke admin untuk verifikasi.</p>
-          </div>
         </DialogContent>
       </Dialog>
     </Layout>

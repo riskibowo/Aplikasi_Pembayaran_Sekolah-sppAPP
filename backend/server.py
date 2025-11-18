@@ -22,6 +22,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4, letter
+import mimetypes
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -248,6 +249,11 @@ class Payment(BaseModel):
     tanggal_bayar: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metode: str = "transfer"
     jumlah: float
+    status: str = "pending" 
+    receipt_path: Optional[str] = None
+    # Tambahan field baru
+    nama_pengirim: str = "" 
+    bank_asal: str = ""
     # --- UBAH BARIS INI ---
     status: str = "pending" # pending, diterima
     receipt_path: Optional[str] = None
@@ -288,6 +294,8 @@ class PaymentCreate(BaseModel):
     id_tagihan: str
     id_siswa: str
     jumlah: float
+    nama_pengirim: str
+    bank_asal: str
 
 class ClassUpdate(BaseModel):
     nama_kelas: str
@@ -589,7 +597,10 @@ async def create_payment(payment_data: PaymentCreate):
         id_tagihan=payment_data.id_tagihan,
         id_siswa=payment_data.id_siswa,
         jumlah=payment_data.jumlah,
-        status="pending" # Status diubah menjadi pending
+        status="pending",
+        # Simpan data baru ke database
+        nama_pengirim=payment_data.nama_pengirim,
+        bank_asal=payment_data.bank_asal
     )
     doc = payment.model_dump()
     doc['tanggal_bayar'] = doc['tanggal_bayar'].isoformat()
@@ -615,24 +626,28 @@ async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
 
-    # Accept only pdf for now
-    if file.content_type != 'application/pdf':
-        raise HTTPException(status_code=400, detail="Only PDF receipts are accepted")
+    # 1. Cek Tipe Konten (Izinkan PDF dan Gambar)
+    allowed_types = ["application/pdf", "image/jpeg", "image/png", "image/jpg"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Format file tidak didukung. Gunakan JPG, PNG, atau PDF.")
 
     receipts_dir = ROOT_DIR / 'receipts'
     receipts_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"receipt_{payment_id}.pdf"
+    # 2. Tentukan Ekstensi File Secara Otomatis
+    ext = mimetypes.guess_extension(file.content_type) or ".bin"
+    # Koreksi untuk .jpe -> .jpg agar lebih umum
+    if ext == ".jpe": ext = ".jpg"
+
+    filename = f"receipt_{payment_id}{ext}"
     file_path = receipts_dir / filename
 
     with open(file_path, 'wb') as f:
         content = await file.read()
         f.write(content)
 
-    # Update payment record with receipt path and set status to 'menunggu_konfirmasi'
+    # Update payment record
     await db.payments.update_one({"id": payment_id}, {"$set": {"receipt_path": str(file_path), "status": "menunggu_konfirmasi"}})
-
-    # Update corresponding bill status as well
     await db.bills.update_one({"id": payment['id_tagihan']}, {"$set": {"status": "menunggu_konfirmasi"}})
 
     return {"message": "Receipt uploaded"}
@@ -641,14 +656,12 @@ async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
 # Serve receipt file for a payment (admin or student)
 @api_router.get("/payments/{payment_id}/receipt")
 async def get_payment_receipt(payment_id: str, token: str):
-    # Require a valid token and allow only admin or owner student to access the receipt
     user_payload = await get_current_user(token)
 
     payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
 
-    # Authorization: admin can access any receipt; student can access their own
     role = user_payload.get("role")
     user_id = user_payload.get("user_id")
     if role != "admin" and user_id != payment.get("id_siswa"):
@@ -656,13 +669,15 @@ async def get_payment_receipt(payment_id: str, token: str):
 
     receipt_path = payment.get('receipt_path')
     if not receipt_path:
-        raise HTTPException(status_code=404, detail="Receipt uploaded")
+        raise HTTPException(status_code=404, detail="Receipt not uploaded")
 
     file_path = Path(receipt_path)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Receipt file not found on server")
 
-    return FileResponse(path=str(file_path), media_type='application/pdf', filename=file_path.name)
+    # Deteksi media type otomatis (PDF/JPG/PNG)
+    media_type, _ = mimetypes.guess_type(file_path)
+    return FileResponse(path=str(file_path), media_type=media_type, filename=file_path.name)
 
 # Dashboard Stats
 @api_router.get("/dashboard/stats")
