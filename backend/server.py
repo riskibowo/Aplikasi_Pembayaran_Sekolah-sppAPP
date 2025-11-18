@@ -87,7 +87,9 @@ async def get_payment_receipt(bill_id: str):
 
     elements.append(Paragraph("BUKTI PEMBAYARAN SPP", title_style))
     elements.append(Paragraph(f"<b>SMK MEKAR MURNI</b>", ParagraphStyle('SubTitle', parent=styles['h2'], alignment=TA_CENTER, fontSize=10, spaceAfter=20)))
-
+    
+    
+    
     # Data Kuitansi
     receipt_data = [
         ["NIS", ":", student['nis']],
@@ -254,6 +256,10 @@ class Payment(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
 
 class LoginResponse(BaseModel):
     token: str
@@ -961,6 +967,25 @@ async def get_student_profile(student_id: str):
     if not student:
         raise HTTPException(status_code=404, detail="Siswa tidak ditemukan")
     return student
+@api_router.put("/student/change-password/{student_id}")
+async def change_student_password(student_id: str, request: ChangePasswordRequest):
+    # 1. Cari siswa
+    student = await db.students.find_one({"id": student_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Siswa tidak ditemukan")
+    
+    # 2. Verifikasi password lama
+    if not verify_password(request.old_password, student['password']):
+        raise HTTPException(status_code=400, detail="Password lama salah")
+    
+    # 3. Update password baru
+    hashed_new_password = hash_password(request.new_password)
+    await db.students.update_one(
+        {"id": student_id}, 
+        {"$set": {"password": hashed_new_password}}
+    )
+    
+    return {"message": "Password berhasil diubah"}
 
 @api_router.get("/student/bills/{student_id}")
 async def get_student_bills(student_id: str):

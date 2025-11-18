@@ -17,8 +17,8 @@ const Layout = ({ children }) => {
         { path: '/admin/bills', label: 'Kelola Tagihan', icon: CreditCard },
         { path: '/admin/reports', label: 'Laporan', icon: FileText },
         { path: '/admin/classes', label: 'Data Kelas', icon: GraduationCap },
-        { path: '/admin/bills', label: 'Kelola Tagihan', icon: CreditCard },
-        { path: '/admin/reports', label: 'Laporan', icon: FileText },
+        
+        
       ];
     } else if (user.role === 'kepsek') {
       return [
