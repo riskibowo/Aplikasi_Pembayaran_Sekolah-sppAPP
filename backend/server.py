@@ -893,25 +893,24 @@ async def export_excel(bulan: str, tahun: int):
     buffer.seek(0)
     
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}.xlsx"})
+# ... (impor dan fungsi utility lainnya)
+
 @api_router.get("/receipt/bill/{bill_id}")
 async def get_payment_receipt(bill_id: str):
     # 1. Cari tagihan (bill)
     bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
     if not bill:
         raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
-
-    # 2. Cari pembayaran (payment) berdasarkan id_tagihan
+        
+    # 2. Cari pembayaran (payment)
     payment = await db.payments.find_one({"id_tagihan": bill_id}, {"_id": 0})
     if not payment:
-        # Jika tidak ada pembayaran, masih bisa cetak info tagihan jika sudah lunas (dibayar admin)
         if bill["status"] != "lunas":
             raise HTTPException(status_code=404, detail="Pembayaran untuk tagihan ini belum dikonfirmasi")
-        # Gunakan tanggal hari ini jika data payment tidak ada (misal dikonfirmasi manual admin)
         payment_date_str = datetime.now(timezone.utc).isoformat()
     else:
         payment_date_str = payment["tanggal_bayar"]
-
-
+    
     # 3. Cari data siswa
     student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
     if not student:
@@ -919,50 +918,76 @@ async def get_payment_receipt(bill_id: str):
 
     # 4. Buat PDF
     buffer = BytesIO()
-    # Ukuran kertas kuitansi custom (lebar 5 inch, tinggi 4 inch)
-    doc = SimpleDocTemplate(buffer, pagesize=(5*inch, 4*inch), leftMargin=0.5*inch, rightMargin=0.5*inch, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    # Kertas 5x4 inch, margin 0.3 inch (diperkecil agar lebih padat)
+    doc = SimpleDocTemplate(buffer, pagesize=(5*inch, 4*inch), leftMargin=0.3*inch, rightMargin=0.3*inch, topMargin=0.3*inch, bottomMargin=0.3*inch)
     elements = []
-
+    
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('Title', parent=styles['h1'], alignment=TA_CENTER, fontSize=14, spaceAfter=14, textColor=colors.HexColor('#1e3a8a'))
+    # Judul sedikit lebih kecil dari sebelumnya (14pt)
+    title_style = ParagraphStyle('Title', parent=styles['h1'], alignment=TA_CENTER, fontSize=14, spaceAfter=10, textColor=colors.HexColor('#1e3a8a'))
+    # Subjudul (Nama Sekolah) sedikit lebih kecil (9pt)
+    subtitle_style = ParagraphStyle('SubTitle', parent=styles['h2'], alignment=TA_CENTER, fontSize=9, spaceAfter=14)
+    # Style normal untuk info tambahan
     normal_style = ParagraphStyle('Normal', parent=styles['BodyText'], fontSize=9, alignment=TA_LEFT, spaceAfter=6)
 
     elements.append(Paragraph("BUKTI PEMBAYARAN SPP", title_style))
-    elements.append(Paragraph(f"<b>SMK MEKAR MURNI</b>", ParagraphStyle('SubTitle', parent=styles['h2'], alignment=TA_CENTER, fontSize=9, spaceAfter=14)))
-
-    # Data Kuitansi
+    elements.append(Paragraph("SMK MEKAR MURNI", subtitle_style))
+    
+    # --- PERBAIKAN DAN PENAMBAHAN DETAIL UNTUK KUITANSI ---
+    
     try:
-        tanggal_bayar_formatted = datetime.fromisoformat(payment_date_str).strftime('%d %B %Y %H:%M')
+        payment_datetime = datetime.fromisoformat(payment_date_str)
+        tanggal_bayar_formatted = payment_datetime.strftime('%d %B %Y')
+        waktu_bayar_formatted = payment_datetime.strftime('%H:%M:%S')
     except ValueError:
-        tanggal_bayar_formatted = payment_date_str # Fallback jika format salah
+        tanggal_bayar_formatted = "Data Tanggal Invalid"
+        waktu_bayar_formatted = ""
 
+    # Tambahkan Nomor Kuitansi/ID Pembayaran (Jika ada di Payment)
     receipt_data = [
+        ["No. Tagihan", ":", bill['id']],
         ["NIS", ":", student['nis']],
         ["Nama Siswa", ":", student['nama']],
         ["Kelas", ":", student['kelas']],
-        ["Tanggal Bayar", ":", tanggal_bayar_formatted],
         ["Pembayaran Bulan", ":", f"{bill['bulan']} {bill['tahun']}"],
-        ["Jumlah", ":", f"<b>Rp {bill['jumlah']:,.0f}</b>"],
-        ["Status", ":", "<b>LUNAS</b>"],
+        ["Tanggal Bayar", ":", tanggal_bayar_formatted],
+        ["Waktu Bayar", ":", waktu_bayar_formatted],
+        ["Jumlah Dibayar", ":", f"Rp {bill['jumlah']:,.0f}"],
+        ["Status", ":", bill['status'].upper()],
     ]
 
-    table = Table(receipt_data, colWidths=[1.5*inch, 0.2*inch, 2.3*inch])
+    # Atur lebar kolom agar lebih proporsional
+    table = Table(receipt_data, colWidths=[1.5*inch, 0.1*inch, 2.5*inch])
     table.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('FONTNAME', (2, 5), (2, 6), 'Helvetica-Bold'), # Style untuk <b>
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        
+        # Penekanan pada Jumlah dan Status
+        ('FONTNAME', (0, 7), (2, 8), 'Helvetica-Bold'),
+        ('TEXTCOLOR', (2, 7), (2, 7), colors.HexColor('#1e3a8a')), # Warna biru tua untuk jumlah
+        ('TEXTCOLOR', (2, 8), (2, 8), colors.HexColor('#10b981')), # Warna hijau untuk status LUNAS
+        
+        # Pastikan status LUNAS tercetak tebal (Baris ke-8, Kolom ke-2)
+        ('FONTNAME', (2, 8), (2, 8), 'Helvetica-Bold'), 
     ]))
-
+    
     elements.append(table)
-    elements.append(Spacer(1, 0.3*inch))
-    elements.append(Paragraph("<i>Terima kasih atas pembayaran Anda.</i>", normal_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Keterangan (Dibuat miring/italic agar rapi)
+    elements.append(Paragraph(
+        "<i>Terima kasih atas pembayaran Anda. Harap simpan bukti ini.</i>", 
+        ParagraphStyle('Footer', parent=styles['BodyText'], fontSize=8, alignment=TA_LEFT, spaceAfter=6, textColor=colors.HexColor('#6b7280'))
+    ))
+
+    # --- AKHIR PERBAIKAN ---
 
     doc.build(elements)
     buffer.seek(0)
-
+    
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=kuitansi_{student['nis']}_{bill['bulan']}_{bill['tahun']}.pdf"})
 # ---------------------------
 
