@@ -3,13 +3,14 @@ import Layout from '../../components/Layout';
 import { API } from '../../App';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Edit, Trash2, Search } from 'lucide-react';
+// Tambahkan import MessageCircle (icon WhatsApp)
+import { Plus, Edit, Trash2, Search, MessageCircle } from 'lucide-react';
 
 const AdminStudents = () => {
   const [students, setStudents] = useState([]);
@@ -52,6 +53,81 @@ const AdminStudents = () => {
       console.error('Error fetching classes:', error);
     }
   };
+
+  // --- FITUR BARU: Handle Pengingat WhatsApp ---
+  const handleRemind = async (student) => {
+    if (!student.no_wa) {
+      toast.error('Nomor WhatsApp siswa tidak tersedia');
+      return;
+    }
+
+    const toastId = toast.loading("Menyiapkan data tagihan...");
+
+    try {
+      // 1. Ambil tagihan siswa yang statusnya 'belum' (belum lunas)
+      const response = await axios.get(`${API}/bills`, {
+        params: {
+          id_siswa: student.id,
+          status: 'belum'
+        }
+      });
+      
+      const unpaidBills = response.data;
+
+      if (unpaidBills.length === 0) {
+        toast.dismiss(toastId);
+        toast.success('Siswa ini tidak memiliki tagihan menunggak 🎉');
+        return;
+      }
+
+      // 2. Hitung total dan susun pesan
+      let total = 0;
+      let detailTagihan = "";
+
+      unpaidBills.forEach((bill, index) => {
+        total += bill.jumlah;
+        // Format: - Januari 2024: Rp 500.000
+        detailTagihan += `- ${bill.bulan} ${bill.tahun}: Rp ${bill.jumlah.toLocaleString('id-ID')}\n`;
+      });
+
+      // 3. Format Pesan WhatsApp yang LEBIH BAGUS & RAPIH
+      const message = `*Pemberitahuan Tagihan SPP - SMK MEKAR MURNI*\n\n` +
+        `Kepada Yth.\n` +
+        `Wali Murid dari:\n` +
+        `Nama : *${student.nama}*\n` +
+        `Kelas : ${student.kelas}\n\n` +
+        `Dengan hormat,\n` +
+        `Melalui pesan ini, kami menginformasikan rincian tagihan SPP yang belum terbayarkan sebagai berikut:\n\n` +
+        `${detailTagihan}\n` +
+        `----------------------------------\n` +
+        `*Total Tunggakan: Rp ${total.toLocaleString('id-ID')}*\n` +
+        `----------------------------------\n\n` +
+        `Mohon untuk segera melakukan pembayaran agar proses administrasi siswa tidak terhambat.\n\n` +
+        `Jika pembayaran sudah dilakukan, mohon abaikan pesan ini atau kirimkan bukti pembayaran.\n\n` +
+        `Terima kasih atas perhatian dan kerjasamanya.\n\n` +
+        `Hormat kami,\n` +
+        `*Tata Usaha SMK MEKAR MURNI*`;
+
+      // 4. Format Nomor HP (Ganti 08... jadi 628...)
+      let phoneNumber = student.no_wa.replace(/\D/g, ''); // Hapus karakter non-angka
+      if (phoneNumber.startsWith('0')) {
+        phoneNumber = '62' + phoneNumber.slice(1);
+      }
+
+      // 5. Buka WhatsApp Web
+      const encodedMessage = encodeURIComponent(message);
+      window.open(`https://wa.me/${phoneNumber}?text=${encodedMessage}`, '_blank');
+      
+      toast.dismiss(toastId);
+      toast.success('Membuka WhatsApp...');
+
+    } catch (error) {
+      toast.dismiss(toastId);
+      console.error(error);
+      toast.error('Gagal mengambil data tagihan');
+    }
+  };
+  // ---------------------------------------------
 
   const handleAdd = () => {
     setEditMode(false);
@@ -187,6 +263,17 @@ const AdminStudents = () => {
                         <TableCell>{student.username}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end space-x-2">
+                            {/* TOMBOL BARU: Ingatkan Via WhatsApp */}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemind(student)}
+                              className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                              title="Kirim Pengingat Tagihan"
+                            >
+                              <MessageCircle className="w-4 h-4" />
+                            </Button>
+                            
                             <Button
                               data-testid={`edit-student-${student.nis}`}
                               variant="ghost"
