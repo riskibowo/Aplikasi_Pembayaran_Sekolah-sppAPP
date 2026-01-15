@@ -1,4 +1,7 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -7,8 +10,9 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Annotated
 import uuid
+import sys
 from datetime import datetime, timezone
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -34,6 +38,16 @@ db = client[os.environ['DB_NAME']]
 # Create the main app without a prefix
 app = FastAPI()
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    error_msg = f"Validation error at {request.url.path}: {exc.errors()}"
+    sys.stderr.write(error_msg + "\n")
+    logging.error(error_msg)
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors()},
+    )
+
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
@@ -54,6 +68,15 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_token(data: dict) -> str:
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
+security = HTTPBearer()
+
+async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 # Models
 class User(BaseModel):
@@ -107,6 +130,17 @@ class Payment(BaseModel):
     nama_pengirim: str = "" 
     bank_asal: str = ""
 
+class SchoolProfile(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = "main_profile"
+    nama_sekolah: str = "SMK MEKAR MURNI"
+    alamat: str = "Jl. Pendidikan No. 123, Kota Pendidikan"
+    no_telp: str = "-"
+    bank_nama: str = "BRI"
+    bank_rekening: str = "0000-01-000000-00-0"
+    bank_atas_nama: str = "SMK MEKAR MURNI"
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 # Request/Response Models
 class LoginRequest(BaseModel):
     username: str
@@ -121,6 +155,7 @@ class LoginResponse(BaseModel):
     user: dict
 
 class StudentCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     nis: str
     nama: str
     kelas: str
@@ -130,6 +165,7 @@ class StudentCreate(BaseModel):
     password: str
 
 class ClassCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     nama_kelas: str
     nominal_spp: float
 
@@ -141,6 +177,7 @@ class BillConfirm(BaseModel):
     status: str
 
 class PaymentCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     id_tagihan: str
     id_siswa: str
     jumlah: float
@@ -148,8 +185,25 @@ class PaymentCreate(BaseModel):
     bank_asal: str
 
 class ClassUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     nama_kelas: str
     nominal_spp: float
+
+class StaffCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    username: str
+    password: Optional[str] = None
+    nama: str
+    role: str # admin or kepsek
+
+class SchoolProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    nama_sekolah: str
+    alamat: str
+    no_telp: str
+    bank_nama: str
+    bank_rekening: str
+    bank_atas_nama: str
 
 @api_router.get("/receipt/bill/{bill_id}")
 async def get_payment_receipt(bill_id: str):
@@ -168,7 +222,16 @@ async def get_payment_receipt(bill_id: str):
     if not student:
         raise HTTPException(status_code=404, detail="Data siswa tidak ditemukan")
 
-    # 4. Buat PDF
+    # 4. Cari Info Sekolah
+    school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
+    if not school:
+        school = {
+            "nama_sekolah": "SMK MEKAR MURNI",
+            "alamat": "Jl. Pendidikan No. 123, Kota Pendidikan",
+            "no_telp": "-"
+        }
+
+    # 5. Buat PDF
     buffer = BytesIO()
     # Gunakan ukuran yang pas untuk layout lebar (landscape-ish)
     doc = SimpleDocTemplate(buffer, pagesize=(8.5*inch, 5.5*inch), leftMargin=0.5*inch, rightMargin=0.5*inch, topMargin=0.3*inch, bottomMargin=0.3*inch)
@@ -193,9 +256,9 @@ async def get_payment_receipt(bill_id: str):
         return Paragraph(str(text), style)
 
     # 1. Header (Centered Name & Address)
-    elements.append(p("SMK MEKAR MURNI", school_header_style))
-    elements.append(p("Jl. Pendidikan No. 123, Kota Pendidikan", addr_header_style))
-    elements.append(p("-", addr_header_style))
+    elements.append(p(school['nama_sekolah'].upper(), school_header_style))
+    elements.append(p(school['alamat'], addr_header_style))
+    elements.append(p(f"Telp: {school['no_telp']}", addr_header_style))
     
     # Dashed Line
     elements.append(p("-" * 86, addr_header_style))
@@ -307,17 +370,6 @@ async def delete_class(class_id: str):
     return {"message": "Kelas berhasil dihapus"}
 
 
-# Auth dependency
-async def get_current_user(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("user_id")
-        if user_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return payload
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
 # Initialize database with default data
 async def init_db():
     # Check if admin exists
@@ -359,6 +411,27 @@ async def init_db():
             doc['created_at'] = doc['created_at'].isoformat()
             await db.classes.insert_one(doc)
 
+    # Check if master exists
+    master_exists = await db.users.find_one({"role": "master"})
+    if not master_exists:
+        master_user = User(
+            username="master",
+            password=hash_password("master123"),
+            nama="Master Administrator",
+            role="master"
+        )
+        doc = master_user.model_dump()
+        doc['created_at'] = doc['created_at'].isoformat()
+        await db.users.insert_one(doc)
+
+    # Check if school profile exists
+    profile_exists = await db.school_profile.find_one({"id": "main_profile"})
+    if not profile_exists:
+        profile = SchoolProfile()
+        doc = profile.model_dump()
+        doc['updated_at'] = doc['updated_at'].isoformat()
+        await db.school_profile.insert_one(doc)
+
 # Routes
 @api_router.get("/")
 async def root():
@@ -386,9 +459,79 @@ async def login(request: LoginRequest):
     raise HTTPException(status_code=401, detail="Username atau password salah")
 
 @api_router.get("/auth/me")
-async def get_me(token: str):
-    user_data = await get_current_user(token)
+async def get_me(user_data: Annotated[dict, Depends(get_current_user)]):
     return user_data
+
+# Admin Master (Super Admin) - Staff Management
+@api_router.get("/master/staff")
+async def get_staff(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    staff = await db.users.find({"role": {"$in": ["admin", "kepsek"]}}, {"_id": 0}).to_list(100)
+    return staff
+
+@api_router.post("/master/staff")
+async def create_staff(staff: StaffCreate, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    exists = await db.users.find_one({"username": staff.username})
+    if exists:
+        raise HTTPException(status_code=400, detail="Username sudah digunakan")
+    
+    new_staff = User(
+        username=staff.username,
+        password=hash_password(staff.password),
+        nama=staff.nama,
+        role=staff.role
+    )
+    doc = new_staff.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    await db.users.insert_one(doc)
+    return {"message": "Akun staf berhasil dibuat", "id": new_staff.id}
+
+@api_router.put("/master/staff/{staff_id}")
+async def update_staff(staff_id: str, staff: StaffCreate, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    update_data = {
+        "nama": staff.nama,
+        "role": staff.role
+    }
+    if staff.password:
+        update_data["password"] = hash_password(staff.password)
+    
+    result = await db.users.update_one({"id": staff_id}, {"$set": update_data})
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Staf tidak ditemukan")
+    return {"message": "Akun staf berhasil diupdate"}
+
+@api_router.delete("/master/staff/{staff_id}")
+async def delete_staff(staff_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    result = await db.users.delete_one({"id": staff_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Staf tidak ditemukan")
+    return {"message": "Akun staf berhasil dihapus"}
+
+# Admin Master - School Profile
+@api_router.get("/school-profile")
+async def get_school_profile():
+    profile = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
+    return profile
+
+@api_router.put("/master/school-profile")
+async def update_school_profile(profile_data: SchoolProfileUpdate, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    doc = profile_data.model_dump()
+    doc['updated_at'] = datetime.now(timezone.utc).isoformat()
+    await db.school_profile.update_one({"id": "main_profile"}, {"$set": doc})
+    return {"message": "Profil sekolah berhasil diupdate"}
 
 # Student Routes (Admin only)
 @api_router.get("/students")
@@ -663,8 +806,7 @@ async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
 
 # Serve receipt file for a payment (admin or student)
 @api_router.get("/payments/{payment_id}/receipt/file")
-async def get_uploaded_receipt(payment_id: str, token: str):
-    user_payload = await get_current_user(token)
+async def get_uploaded_receipt(payment_id: str, user_payload: Annotated[dict, Depends(get_current_user)]):
 
     payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
     if not payment:
@@ -689,16 +831,18 @@ async def get_uploaded_receipt(payment_id: str, token: str):
 
 # Dashboard Stats
 @api_router.get("/dashboard/stats")
-async def get_dashboard_stats():
+async def get_dashboard_stats(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
     # Total students
     total_students = await db.students.count_documents({})
     
     # Total payment this month
-    current_month = datetime.now(timezone.utc).strftime("%B")
-    current_year = datetime.now(timezone.utc).year
+    now = datetime.now(timezone.utc)
+    current_month_str = now.strftime("%Y-%m")
     
-    monthly_payments = await db.payments.find({}, {"_id": 0}).to_list(1000)
-    total_bulan_ini = sum(p["jumlah"] for p in monthly_payments if isinstance(p["tanggal_bayar"], str) and p["tanggal_bayar"].startswith(str(current_year)))
+    monthly_payments = await db.payments.find({"status": "diterima"}, {"_id": 0}).to_list(1000)
+    total_bulan_ini = sum(p["jumlah"] for p in monthly_payments if isinstance(p["tanggal_bayar"], str) and p["tanggal_bayar"].startswith(current_month_str))
     
     # Students with unpaid bills
     unpaid_bills = await db.bills.find({"status": "belum"}, {"_id": 0}).to_list(1000)
@@ -725,7 +869,9 @@ async def get_dashboard_stats():
     }
     
 @api_router.get("/reports/annual")
-async def get_annual_report():
+async def get_annual_report(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
     # Ambil semua pembayaran yang statusnya diterima
     payments = await db.payments.find({"status": "diterima"}, {"_id": 0}).to_list(1000)
     annual_data = {}
@@ -759,7 +905,9 @@ async def get_annual_report():
     }
 # Reports
 @api_router.get("/reports/daily")
-async def get_daily_report():
+async def get_daily_report(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     payments = await db.payments.find({}, {"_id": 0}).to_list(1000)
     daily_payments = [p for p in payments if isinstance(p["tanggal_bayar"], str) and p["tanggal_bayar"].startswith(today)]
@@ -778,7 +926,9 @@ async def get_daily_report():
     return {"total": total, "payments": daily_payments}
 
 @api_router.get("/reports/monthly")
-async def get_monthly_report(bulan: str, tahun: int):
+async def get_monthly_report(bulan: str, tahun: int, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
     payments = await db.payments.find({}, {"_id": 0}).to_list(1000)
     bills = await db.bills.find({"bulan": bulan, "tahun": tahun}, {"_id": 0}).to_list(1000)
     
@@ -802,8 +952,18 @@ async def get_monthly_report(bulan: str, tahun: int):
     }
 
 @api_router.get("/reports/student/{student_id}")
-async def get_student_report(student_id: str):
-    # Get student data
+async def get_student_report(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    role = current_user.get("role")
+    user_id = current_user.get("user_id")
+    
+    # Check if authorized: Admin/Kepsek/Master can see all, Siswa only self
+    is_staff = role in ["admin", "kepsek", "master"]
+    is_owner = role == "siswa" and user_id == student_id
+    
+    if not (is_staff or is_owner):
+        logging.warning(f"Unauthorized report access: {user_id} ({role}) tried to access student {student_id}")
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
     student = await db.students.find_one({"id": student_id}, {"_id": 0})
     if not student:
         raise HTTPException(status_code=404, detail="Siswa tidak ditemukan")
@@ -829,7 +989,9 @@ async def get_student_report(student_id: str):
     }
 
 @api_router.get("/reports/class/{class_name}")
-async def get_class_report(class_name: str):
+async def get_class_report(class_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
     # Get all students in this class
     students = await db.students.find({"kelas": class_name}, {"_id": 0}).to_list(1000)
     student_ids = [s["id"] for s in students]
@@ -853,8 +1015,8 @@ async def get_class_report(class_name: str):
         s_paid = sum(p["jumlah"] for p in s_payments)
         
         breakdown.append({
-            "nis": student["nis"],
-            "nama": student["nama"],
+            "nis": student.get("nis", "-"),
+            "nama": student.get("nama", "-"),
             "total_tagihan": s_total,
             "total_dibayar": s_paid,
             "status": "Lunas" if s_total > 0 and s_total == s_paid else "Belum Lunas"
@@ -870,7 +1032,9 @@ async def get_class_report(class_name: str):
     }
 
 @api_router.get("/reports/batch/{batch}")
-async def get_batch_report(batch: str):
+async def get_batch_report(batch: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
     # Get all students in this batch (angkatan)
     students = await db.students.find({"angkatan": batch}, {"_id": 0}).to_list(1000)
     student_ids = [s["id"] for s in students]
@@ -885,11 +1049,11 @@ async def get_batch_report(batch: str):
     total_masuk = sum(p["jumlah"] for p in payments)
     
     # Per class breakdown within batch
-    classes = sorted(list(set(s["kelas"] for s in students)))
+    classes = sorted(list(set(s.get("kelas", "-") for s in students)))
     class_breakdown = []
     
     for cls in classes:
-        cls_students = [s for s in students if s["kelas"] == cls]
+        cls_students = [s for s in students if s.get("kelas", "-") == cls]
         cls_student_ids = [s["id"] for s in cls_students]
         
         cls_bills = [b for b in bills if b["id_siswa"] in cls_student_ids]
@@ -918,7 +1082,9 @@ async def get_batch_report(batch: str):
 import calendar
 
 @api_router.get("/reports/export-pdf")
-async def export_pdf(bulan: str, tahun: int):
+async def export_pdf(bulan: str, tahun: int, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
     # Get data
     bills = await db.bills.find({"bulan": bulan, "tahun": tahun}, {"_id": 0}).to_list(1000)
     
@@ -987,8 +1153,10 @@ async def export_pdf(bulan: str, tahun: int):
     
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}.pdf"})
 
-@api_router.get("/reports/export-excel")
-async def export_excel(bulan: str, tahun: int):
+@api_router.get("/reports/export-xlsx")
+async def export_xlsx(bulan: str, tahun: int, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
     # Get data
     bills = await db.bills.find({"bulan": bulan, "tahun": tahun}, {"_id": 0}).to_list(1000)
     
@@ -1017,8 +1185,10 @@ async def export_excel(bulan: str, tahun: int):
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}.xlsx"})
 
 @api_router.get("/reports/student/{student_id}/export-pdf")
-async def export_student_pdf(student_id: str):
-    report = await get_student_report(student_id)
+async def export_student_pdf(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    # Log for debugging
+    logging.info(f"Export student PDF request: student={student_id}, user={current_user.get('user_id')}")
+    report = await get_student_report(student_id, current_user)
     student = report['student']
     
     buffer = BytesIO()
@@ -1030,8 +1200,8 @@ async def export_student_pdf(student_id: str):
     elements.append(Paragraph(f"LAPORAN PEMBAYARAN SISWA", title_style))
     
     info_data = [
-        [Paragraph(f"Nama: <b>{student['nama']}</b>", styles['Normal']), Paragraph(f"NIS: <b>{student['nis']}</b>", styles['Normal'])],
-        [Paragraph(f"Kelas: <b>{student['kelas']}</b>", styles['Normal']), Paragraph(f"Angkatan: <b>{student['angkatan']}</b>", styles['Normal'])]
+        [Paragraph(f"Nama: <b>{student.get('nama', '-')}</b>", styles['Normal']), Paragraph(f"NIS: <b>{student.get('nis', '-')}</b>", styles['Normal'])],
+        [Paragraph(f"Kelas: <b>{student.get('kelas', '-')}</b>", styles['Normal']), Paragraph(f"Angkatan: <b>{student.get('angkatan', '-')}</b>", styles['Normal'])]
     ]
     elements.append(Table(info_data, colWidths=[3*inch, 3*inch]))
     elements.append(Spacer(1, 0.2*inch))
@@ -1056,11 +1226,12 @@ async def export_student_pdf(student_id: str):
     
     doc.build(elements)
     buffer.seek(0)
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{student['nis']}.pdf"})
+    nis_val = str(student.get('nis', 'data'))
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{nis_val}.pdf"})
 
 @api_router.get("/reports/class/{class_name}/export-pdf")
-async def export_class_pdf(class_name: str):
-    report = await get_class_report(class_name)
+async def export_class_pdf(class_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    report = await get_class_report(class_name, current_user)
     
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
@@ -1096,8 +1267,8 @@ async def export_class_pdf(class_name: str):
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_kelas_{class_name}.pdf"})
 
 @api_router.get("/reports/batch/{batch}/export-pdf")
-async def export_batch_pdf(batch: str):
-    report = await get_batch_report(batch)
+async def export_batch_pdf(batch: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    report = await get_batch_report(batch, current_user)
     
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
@@ -1126,9 +1297,9 @@ async def export_batch_pdf(batch: str):
     buffer.seek(0)
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_angkatan_{batch}.pdf"})
 
-@api_router.get("/reports/student/{student_id}/export-excel")
-async def export_student_excel(student_id: str):
-    report = await get_student_report(student_id)
+@api_router.get("/reports/student/{student_id}/export-xlsx")
+async def export_student_xlsx(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    report = await get_student_report(student_id, current_user)
     student = report['student']
     
     data_list = []
@@ -1146,11 +1317,12 @@ async def export_student_excel(student_id: str):
         df.to_excel(writer, index=False, sheet_name='Laporan Siswa')
     buffer.seek(0)
     
-    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{student['nis']}.xlsx"})
+    nis_val = str(student.get('nis', 'data'))
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{nis_val}.xlsx"})
 
-@api_router.get("/reports/class/{class_name}/export-excel")
-async def export_class_excel(class_name: str):
-    report = await get_class_report(class_name)
+@api_router.get("/reports/class/{class_name}/export-xlsx")
+async def export_class_xlsx(class_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    report = await get_class_report(class_name, current_user)
     
     data_list = []
     for s in report['breakdown']:
@@ -1171,9 +1343,9 @@ async def export_class_excel(class_name: str):
     
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_kelas_{class_name}.xlsx"})
 
-@api_router.get("/reports/batch/{batch}/export-excel")
-async def export_batch_excel(batch: str):
-    report = await get_batch_report(batch)
+@api_router.get("/reports/batch/{batch}/export-xlsx")
+async def export_batch_xlsx(batch: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    report = await get_batch_report(batch, current_user)
     
     data_list = []
     for c in report['class_breakdown']:

@@ -2,7 +2,7 @@ import React, { useContext } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AuthContext } from '../App';
 import { Button } from '@/components/ui/button';
-import { School, LayoutDashboard, Users, FileText, LogOut, User, CreditCard, History, GraduationCap } from 'lucide-react';
+import { School, LayoutDashboard, Users, FileText, LogOut, User, CreditCard, History, GraduationCap, Settings, ShieldCheck } from 'lucide-react';
 
 const Layout = ({ children }) => {
   const { user, logout } = useContext(AuthContext);
@@ -17,13 +17,19 @@ const Layout = ({ children }) => {
         { path: '/admin/bills', label: 'Kelola Tagihan', icon: CreditCard },
         { path: '/admin/reports', label: 'Laporan', icon: FileText },
         { path: '/admin/classes', label: 'Data Kelas', icon: GraduationCap },
-        
-        
+
+
+      ];
+    } else if (user.role === 'master') {
+      return [
+        { path: '/master/dashboard', label: 'Dashboard Master', icon: LayoutDashboard },
+        { path: '/master/staff', label: 'Kelola Staf', icon: ShieldCheck },
+        { path: '/master/settings', label: 'Pengaturan Sekolah', icon: Settings },
       ];
     } else if (user.role === 'kepsek') {
       return [
         { path: '/kepsek/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-        { path: '/kepsek/reports', label: 'Laporan', icon: FileText },
+        { path: '/kepsek/reports', label: 'Laporan Seluruh', icon: FileText },
       ];
     } else {
       return [
@@ -52,7 +58,7 @@ const Layout = ({ children }) => {
               <School className="w-7 h-7" />
             </div>
             <div>
-              <h1 className="text-lg font-bold" style={{fontFamily: 'Space Grotesk, sans-serif'}}>SPP System</h1>
+              <h1 className="text-lg font-bold" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>SPP System</h1>
               <p className="text-xs text-blue-200">SMK MEKAR MURNI</p>
             </div>
           </div>
@@ -74,11 +80,10 @@ const Layout = ({ children }) => {
                   key={item.path}
                   data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
                   onClick={() => navigate(item.path)}
-                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-                    isActive
-                      ? 'bg-white text-blue-900 shadow-lg'
-                      : 'text-white hover:bg-white/10'
-                  }`}
+                  className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 ${isActive
+                    ? 'bg-white text-blue-900 shadow-lg'
+                    : 'text-white hover:bg-white/10'
+                    }`}
                 >
                   <Icon className="w-5 h-5" />
                   <span className="font-medium text-sm">{item.label}</span>

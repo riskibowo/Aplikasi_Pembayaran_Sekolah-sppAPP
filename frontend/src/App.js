@@ -1,12 +1,12 @@
 // 1. Import React sudah ditambahkan di sini
-import React, { useEffect, useState } from "react"; 
+import React, { useEffect, useState } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import axios from "axios";
 
 // 2. INI ADALAH PERBAIKAN PENTING:
 //    Impor Toaster dan toast langsung dari 'sonner'
-import { Toaster, toast } from "sonner"; 
+import { Toaster, toast } from "sonner";
 
 // Pages
 import LoginPage from "./pages/LoginPage";
@@ -15,16 +15,31 @@ import AdminStudents from "./pages/admin/Students";
 import AdminBills from "./pages/admin/Bills";
 import AdminReports from "./pages/admin/Reports";
 // 3. Impor halaman baru yang kita buat
-import AdminClasses from "./pages/admin/Classes"; 
+import AdminClasses from "./pages/admin/Classes";
 import KepsekDashboard from "./pages/kepsek/Dashboard";
 import KepsekReports from "./pages/kepsek/Reports";
 import StudentDashboard from "./pages/student/Dashboard";
 import StudentProfile from "./pages/student/Profile";
 import StudentBills from "./pages/student/Bills";
 import StudentPayments from "./pages/student/Payments";
+import MasterDashboard from "./pages/master/Dashboard";
+import StaffManagement from "./pages/master/StaffManagement";
+import SchoolSettings from "./pages/master/SchoolSettings";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
+
+// Axios Interceptor for Auth (Global)
+axios.interceptors.request.use(
+  (config) => {
+    const tokenData = localStorage.getItem("token");
+    if (tokenData) {
+      config.headers.Authorization = `Bearer ${tokenData}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
 // Auth Context
 export const AuthContext = React.createContext();
@@ -36,13 +51,11 @@ function App() {
 
   useEffect(() => {
     if (token) {
-      // Verify token
       const userData = JSON.parse(localStorage.getItem("user") || "null");
       setUser(userData);
     }
     setLoading(false);
   }, [token]);
-
   const login = (userData, tokenData) => {
     setUser(userData);
     setToken(tokenData);
@@ -71,10 +84,10 @@ function App() {
       <div className="App">
         <BrowserRouter>
           {/* 4. Toaster hanya diletakkan SATU KALI di sini */}
-          <Toaster position="top-right" richColors /> 
+          <Toaster position="top-right" richColors />
           <Routes>
             <Route path="/" element={!user ? <LoginPage /> : <Navigate to={`/${user.role}/dashboard`} />} />
-            
+
             {/* Admin Routes */}
             <Route path="/admin/dashboard" element={user?.role === "admin" ? <AdminDashboard /> : <Navigate to="/" />} />
             <Route path="/admin/students" element={user?.role === "admin" ? <AdminStudents /> : <Navigate to="/" />} />
@@ -82,16 +95,21 @@ function App() {
             <Route path="/admin/reports" element={user?.role === "admin" ? <AdminReports /> : <Navigate to="/" />} />
             {/* 5. Rute baru ditambahkan di sini */}
             <Route path="/admin/classes" element={user?.role === "admin" ? <AdminClasses /> : <Navigate to="/" />} />
-            
+
             {/* Kepala Sekolah Routes */}
             <Route path="/kepsek/dashboard" element={user?.role === "kepsek" ? <KepsekDashboard /> : <Navigate to="/" />} />
             <Route path="/kepsek/reports" element={user?.role === "kepsek" ? <KepsekReports /> : <Navigate to="/" />} />
-            
+
             {/* Student Routes */}
             <Route path="/siswa/dashboard" element={user?.role === "siswa" ? <StudentDashboard /> : <Navigate to="/" />} />
             <Route path="/siswa/profile" element={user?.role === "siswa" ? <StudentProfile /> : <Navigate to="/" />} />
             <Route path="/siswa/bills" element={user?.role === "siswa" ? <StudentBills /> : <Navigate to="/" />} />
             <Route path="/siswa/payments" element={user?.role === "siswa" ? <StudentPayments /> : <Navigate to="/" />} />
+
+            {/* Master Routes */}
+            <Route path="/master/dashboard" element={user?.role === "master" ? <MasterDashboard /> : <Navigate to="/" />} />
+            <Route path="/master/staff" element={user?.role === "master" ? <StaffManagement /> : <Navigate to="/" />} />
+            <Route path="/master/settings" element={user?.role === "master" ? <SchoolSettings /> : <Navigate to="/" />} />
           </Routes>
         </BrowserRouter>
         {/* <Toaster> yang duplikat dihapus dari sini */}
