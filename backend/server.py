@@ -19,8 +19,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, letter
 import mimetypes
 
@@ -55,153 +54,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_token(data: dict) -> str:
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
+
 # Models
-class ClassUpdate(BaseModel):
-    nama_kelas: str
-    nominal_spp: float
-
-@api_router.get("/receipt/bill/{bill_id}")
-async def get_payment_receipt(bill_id: str):
-    # 1. Cari tagihan (bill)
-    bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
-    if not bill:
-        raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
-        
-    # 2. Cari pembayaran (payment) berdasarkan id_tagihan
-    payment = await db.payments.find_one({"id_tagihan": bill_id}, {"_id": 0})
-    if not payment:
-        raise HTTPException(status_code=404, detail="Pembayaran untuk tagihan ini tidak ditemukan")
-
-    # 3. Cari data siswa
-    student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
-    if not student:
-        raise HTTPException(status_code=404, detail="Data siswa tidak ditemukan")
-
-    # 4. Buat PDF
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=(5*inch, 4*inch), leftMargin=0.5*inch, rightMargin=0.5*inch, topMargin=0.5*inch, bottomMargin=0.5*inch)
-    elements = []
-    
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('Title', parent=styles['h1'], alignment=TA_CENTER, fontSize=16, spaceAfter=20, textColor=colors.HexColor('#1e3a8a'))
-    normal_style = ParagraphStyle('Normal', parent=styles['BodyText'], fontSize=10, alignment=TA_LEFT, spaceAfter=6)
-
-    elements.append(Paragraph("BUKTI PEMBAYARAN SPP", title_style))
-    elements.append(Paragraph(f"<b>SMK MEKAR MURNI</b>", ParagraphStyle('SubTitle', parent=styles['h2'], alignment=TA_CENTER, fontSize=10, spaceAfter=20)))
-    
-    
-    
-    # Data Kuitansi
-    receipt_data = [
-        ["NIS", ":", student['nis']],
-        ["Nama Siswa", ":", student['nama']],
-        ["Kelas", ":", student['kelas']],
-        ["Tanggal Bayar", ":", datetime.fromisoformat(payment['tanggal_bayar']).strftime('%d %B %Y %H:%M')],
-        ["Pembayaran Bulan", ":", f"{bill['bulan']} {bill['tahun']}"],
-        ["Jumlah", ":", f"<b>Rp {bill['jumlah']:,.0f}</b>"],
-        ["Status", ":", "<b>LUNAS</b>"],
-    ]
-
-    table = Table(receipt_data, colWidths=[1.5*inch, 0.2*inch, 2.3*inch])
-    table.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        # Style untuk <b>
-        ('FONTNAME', (2, 5), (2, 6), 'Helvetica-Bold'), 
-    ]))
-    
-    elements.append(table)
-    elements.append(Spacer(1, 0.5*inch))
-    elements.append(Paragraph("Terima kasih atas pembayaran Anda.", normal_style))
-
-    doc.build(elements)
-    buffer.seek(0)
-    
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=kuitansi_{student['nis']}_{bill['bulan']}_{bill['tahun']}.pdf"})
-
-@api_router.get("/reports/annual")
-async def get_annual_report():
-    # Ini adalah contoh agregasi MongoDB
-    pipeline = [
-        {
-            "$match": {"status": "lunas"}
-        },
-        {
-            "$project": {
-                "tahun": {
-                    "$year": {"$dateFromString": {"dateString": "$tanggal_bayar"}}
-                },
-                "jumlah": "$jumlah"
-            }
-        },
-        {
-            "$group": {
-                "_id": "$tahun",
-                "total_pemasukan": {"$sum": "$jumlah"}
-            }
-        },
-        {
-            "$sort": {"_id": 1} # Urutkan berdasarkan tahun
-        },
-        {
-            "$project": {
-                "tahun": "$_id",
-                "pemasukan": "$total_pemasukan",
-                "_id": 0
-            }
-        }
-    ]
-    
-    # Perlu motor v4+ untuk $dateFromString, jika tidak, lakukan manual
-    # Jika agregasi di atas gagal, gunakan cara manual:
-    payments = await db.payments.find({"status": "diterima"}, {"_id": 0}).to_list(1000)
-    annual_data = {}
-    for p in payments:
-        try:
-            # Pastikan tanggal_bayar adalah string ISO
-            payment_date = datetime.fromisoformat(p["tanggal_bayar"])
-            year = payment_date.year
-            if year not in annual_data:
-                annual_data[year] = 0
-            annual_data[year] += p["jumlah"]
-        except (TypeError, ValueError):
-            continue # Abaikan format tanggal yang salah
-
-    # Konversi ke format chart
-    chart_data = [{"tahun": year, "pemasukan": total} for year, total in sorted(annual_data.items())]
-    
-    # Ambil total untuk tahun ini saja
-    current_year_total = annual_data.get(datetime.now().year, 0)
-    
-    return {
-        "total_pemasukan_tahun_ini": current_year_total,
-        "chart_data": chart_data
-    }
-
-@api_router.put("/classes/{class_id}")
-async def update_class(class_id: str, class_data: ClassUpdate):
-    exists = await db.classes.find_one({"id": class_id})
-    if not exists:
-        raise HTTPException(status_code=404, detail="Kelas tidak ditemukan")
-    
-    updated_data = class_data.model_dump()
-    await db.classes.update_one({"id": class_id}, {"$set": updated_data})
-    return {"message": "Kelas berhasil diupdate"}
-
-@api_router.delete("/classes/{class_id}")
-async def delete_class(class_id: str):
-    # Perlu ditambahkan: Cek apakah ada siswa yang masih menggunakan kelas ini sebelum menghapus
-    student_exists = await db.students.find_one({"kelas": (await db.classes.find_one({"id": class_id}))["nama_kelas"]})
-    if student_exists:
-        raise HTTPException(status_code=400, detail="Tidak dapat menghapus, kelas masih digunakan oleh siswa.")
-
-    result = await db.classes.delete_one({"id": class_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Kelas tidak ditemukan")
-    return {"message": "Kelas berhasil dihapus"}
-
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -217,6 +71,7 @@ class Student(BaseModel):
     nis: str
     nama: str
     kelas: str
+    angkatan: str
     no_wa: str
     username: str
     password: str
@@ -236,9 +91,7 @@ class Bill(BaseModel):
     bulan: str
     tahun: int
     jumlah: float
-    # --- UBAH BARIS INI ---
     status: str = "belum"  # belum, menunggu_konfirmasi, lunas
-    # ---------------------
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class Payment(BaseModel):
@@ -251,12 +104,8 @@ class Payment(BaseModel):
     jumlah: float
     status: str = "pending" 
     receipt_path: Optional[str] = None
-    # Tambahan field baru
     nama_pengirim: str = "" 
     bank_asal: str = ""
-    # --- UBAH BARIS INI ---
-    status: str = "pending" # pending, diterima
-    receipt_path: Optional[str] = None
 
 # Request/Response Models
 class LoginRequest(BaseModel):
@@ -275,6 +124,7 @@ class StudentCreate(BaseModel):
     nis: str
     nama: str
     kelas: str
+    angkatan: str
     no_wa: str
     username: str
     password: str
@@ -300,6 +150,162 @@ class PaymentCreate(BaseModel):
 class ClassUpdate(BaseModel):
     nama_kelas: str
     nominal_spp: float
+
+@api_router.get("/receipt/bill/{bill_id}")
+async def get_payment_receipt(bill_id: str):
+    # 1. Cari tagihan (bill)
+    bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
+    if not bill:
+        raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
+        
+    # 2. Cari pembayaran (payment) berdasarkan id_tagihan
+    payment = await db.payments.find_one({"id_tagihan": bill_id}, {"_id": 0})
+    if not payment:
+        raise HTTPException(status_code=404, detail="Pembayaran untuk tagihan ini tidak ditemukan")
+
+    # 3. Cari data siswa
+    student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
+    if not student:
+        raise HTTPException(status_code=404, detail="Data siswa tidak ditemukan")
+
+    # 4. Buat PDF
+    buffer = BytesIO()
+    # Gunakan ukuran yang pas untuk layout lebar (landscape-ish)
+    doc = SimpleDocTemplate(buffer, pagesize=(8.5*inch, 5.5*inch), leftMargin=0.5*inch, rightMargin=0.5*inch, topMargin=0.3*inch, bottomMargin=0.3*inch)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    
+    # Define styles for new layout (slightly smaller)
+    school_header_style = ParagraphStyle('SchoolHeader', fontSize=11, alignment=TA_CENTER, fontName='Courier-Bold', leading=13)
+    addr_header_style = ParagraphStyle('AddrHeader', fontSize=9, alignment=TA_CENTER, fontName='Courier', leading=11)
+    title_receipt_style = ParagraphStyle('TitleReceipt', fontSize=10, alignment=TA_CENTER, fontName='Courier-Bold', spaceBefore=8, spaceAfter=8)
+    info_label_style = ParagraphStyle('InfoLabel', fontSize=9, fontName='Courier')
+    info_value_style = ParagraphStyle('InfoValue', fontSize=9, fontName='Courier-Bold')
+    table_header_style = ParagraphStyle('TableHeader', fontSize=9, fontName='Courier-Bold', alignment=TA_CENTER)
+    table_content_style = ParagraphStyle('TableContent', fontSize=9, fontName='Courier')
+    table_numeric_style = ParagraphStyle('TableNumeric', fontSize=9, fontName='Courier', alignment=TA_RIGHT)
+    total_label_style = ParagraphStyle('TotalLabel', fontSize=9, fontName='Courier', alignment=TA_RIGHT)
+    total_value_style = ParagraphStyle('TotalValue', fontSize=9, fontName='Courier-Bold', alignment=TA_RIGHT)
+    footer_sign_style = ParagraphStyle('FooterSign', fontSize=9, fontName='Courier', alignment=TA_CENTER)
+
+    def p(text, style):
+        return Paragraph(str(text), style)
+
+    # 1. Header (Centered Name & Address)
+    elements.append(p("SMK MEKAR MURNI", school_header_style))
+    elements.append(p("Jl. Pendidikan No. 123, Kota Pendidikan", addr_header_style))
+    elements.append(p("-", addr_header_style))
+    
+    # Dashed Line
+    elements.append(p("-" * 86, addr_header_style))
+    
+    # 2. Receipt Title
+    elements.append(p("BUKTI PEMBAYARAN", title_receipt_style))
+    
+    # 3. Two Column Info Section
+    info_col1 = [
+        [p("No Transaksi", info_label_style), p(":", info_label_style), p(payment['id'][:12].upper(), info_value_style)],
+        [p("No Induk", info_label_style), p(":", info_label_style), p(student['nis'], info_value_style)],
+        [p("Nama", info_label_style), p(":", info_label_style), p(student['nama'], info_value_style)],
+    ]
+    info_col2 = [
+        [p("Tanggal", info_label_style), p(":", info_label_style), p(datetime.fromisoformat(payment['tanggal_bayar']).strftime('%d-%m-%Y %H:%M:%S'), info_value_style)],
+        [p("Kelas", info_label_style), p(":", info_label_style), p(student['kelas'], info_value_style)],
+    ]
+    
+    info_table_data = [
+        [Table(info_col1, colWidths=[1.2*inch, 0.1*inch, 2.5*inch], style=TableStyle([('LEFTPADDING', (0,0), (-1,-1), 0), ('RIGHTPADDING', (0,0), (-1,-1), 0), ('TOPPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 2)])),
+         Table(info_col2, colWidths=[1.0*inch, 0.1*inch, 2.5*inch], style=TableStyle([('LEFTPADDING', (0,0), (-1,-1), 0), ('RIGHTPADDING', (0,0), (-1,-1), 0), ('TOPPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 2)]))]
+    ]
+    
+    main_info_table = Table(info_table_data, colWidths=[4*inch, 3.5*inch])
+    main_info_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    elements.append(main_info_table)
+    elements.append(Spacer(1, 0.1*inch))
+    
+    # Dashed Line before table
+    elements.append(p("-" * 87, addr_header_style))
+    
+    # 4. Itemized Table
+    table_data = [
+        [p("No", table_header_style), p("Nama Pembayaran", table_header_style), p("Nominal", table_header_style)],
+        [p("1", table_content_style), p(f"BIAYA SPP {bill['tahun']} Bulan {bill['bulan']}", table_content_style), p(f"{bill['jumlah']:,.0f}", table_numeric_style)],
+    ]
+    
+    # Fill with some empty rows to make it look like the sample if needed, but here we just have one item
+    
+    item_table = Table(table_data, colWidths=[0.5*inch, 5.0*inch, 1.5*inch])
+    item_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(item_table)
+    
+    # Dashed Line after table content
+    elements.append(Spacer(1, 0.2*inch))
+    elements.append(p("-" * 87, addr_header_style))
+    
+    # 5. Totals Section
+    total_data = [
+        ["", p("Total   :", total_label_style), p(f"{bill['jumlah']:,.0f}", total_value_style)],
+        ["", p("Tunai   :", total_label_style), p(f"{bill['jumlah']:,.0f}", total_value_style)],
+        ["", p("Kembali :", total_label_style), p("0", total_value_style)],
+    ]
+    total_table = Table(total_data, colWidths=[4.5*inch, 1.0*inch, 1.5*inch])
+    total_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(total_table)
+    
+    # Dashed Line after totals
+    elements.append(p("-" * 87, addr_header_style))
+    
+    # 6. Signatures Footer
+    elements.append(Spacer(1, 0.1*inch))
+    sig_elements = [
+        [p(f"Indonesia, {datetime.now().strftime('%d-%m-%Y')}", footer_sign_style)],
+        [p("Petugas", footer_sign_style)],
+        [Spacer(1, 0.4*inch)],
+        [p("Admin", footer_sign_style)],
+    ]
+    sig_table = Table(sig_elements, colWidths=[7.0*inch]) # Centered/Right aligned signature
+    sig_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+        ('LEFTPADDING', (0,0), (-1,-1), 4.5*inch),
+    ]))
+    elements.append(sig_table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=kuitansi_{student['nis']}_{bill['bulan']}_{bill['tahun']}.pdf"})
+
+@api_router.put("/classes/{class_id}")
+async def update_class(class_id: str, class_data: ClassUpdate):
+    exists = await db.classes.find_one({"id": class_id})
+    if not exists:
+        raise HTTPException(status_code=404, detail="Kelas tidak ditemukan")
+    
+    updated_data = class_data.model_dump()
+    await db.classes.update_one({"id": class_id}, {"$set": updated_data})
+    return {"message": "Kelas berhasil diupdate"}
+
+@api_router.delete("/classes/{class_id}")
+async def delete_class(class_id: str):
+    # Perlu ditambahkan: Cek apakah ada siswa yang masih menggunakan kelas ini sebelum menghapus
+    student_exists = await db.students.find_one({"kelas": (await db.classes.find_one({"id": class_id}))["nama_kelas"]})
+    if student_exists:
+        raise HTTPException(status_code=400, detail="Tidak dapat menghapus, kelas masih digunakan oleh siswa.")
+
+    result = await db.classes.delete_one({"id": class_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Kelas tidak ditemukan")
+    return {"message": "Kelas berhasil dihapus"}
+
 
 # Auth dependency
 async def get_current_user(token: str):
@@ -401,6 +407,7 @@ async def create_student(student: StudentCreate):
         nis=student.nis,
         nama=student.nama,
         kelas=student.kelas,
+        angkatan=student.angkatan,
         no_wa=student.no_wa,
         username=student.username,
         password=hash_password(student.password)
@@ -421,6 +428,7 @@ async def update_student(student_id: str, student: StudentCreate):
         "nis": student.nis,
         "nama": student.nama,
         "kelas": student.kelas,
+        "angkatan": student.angkatan,
         "no_wa": student.no_wa,
         "username": student.username
     }
@@ -654,8 +662,8 @@ async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
 
 
 # Serve receipt file for a payment (admin or student)
-@api_router.get("/payments/{payment_id}/receipt")
-async def get_payment_receipt(payment_id: str, token: str):
+@api_router.get("/payments/{payment_id}/receipt/file")
+async def get_uploaded_receipt(payment_id: str, token: str):
     user_payload = await get_current_user(token)
 
     payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
@@ -793,6 +801,120 @@ async def get_monthly_report(bulan: str, tahun: int):
         "payments": monthly_payments
     }
 
+@api_router.get("/reports/student/{student_id}")
+async def get_student_report(student_id: str):
+    # Get student data
+    student = await db.students.find_one({"id": student_id}, {"_id": 0})
+    if not student:
+        raise HTTPException(status_code=404, detail="Siswa tidak ditemukan")
+    
+    # Get all bills for this student
+    bills = await db.bills.find({"id_siswa": student_id}, {"_id": 0}).to_list(1000)
+    
+    # Get all payments for this student
+    payments = await db.payments.find({"id_siswa": student_id}, {"_id": 0}).to_list(1000)
+    
+    total_tagihan = sum(b["jumlah"] for b in bills)
+    total_dibayar = sum(p["jumlah"] for p in payments if p["status"] == "diterima")
+    
+    return {
+        "student": student,
+        "bills": bills,
+        "payments": payments,
+        "summary": {
+            "total_tagihan": total_tagihan,
+            "total_dibayar": total_dibayar,
+            "sisa_tagihan": total_tagihan - total_dibayar
+        }
+    }
+
+@api_router.get("/reports/class/{class_name}")
+async def get_class_report(class_name: str):
+    # Get all students in this class
+    students = await db.students.find({"kelas": class_name}, {"_id": 0}).to_list(1000)
+    student_ids = [s["id"] for s in students]
+    
+    # Get all bills for these students
+    bills = await db.bills.find({"id_siswa": {"$in": student_ids}}, {"_id": 0}).to_list(5000)
+    
+    # Get all payments for these students
+    payments = await db.payments.find({"id_siswa": {"$in": student_ids}, "status": "diterima"}, {"_id": 0}).to_list(5000)
+    
+    total_estimasi = sum(b["jumlah"] for b in bills)
+    total_masuk = sum(p["jumlah"] for p in payments)
+    
+    # Per student breakdown
+    breakdown = []
+    for student in students:
+        s_bills = [b for b in bills if b["id_siswa"] == student["id"]]
+        s_payments = [p for p in payments if p["id_siswa"] == student["id"]]
+        
+        s_total = sum(b["jumlah"] for b in s_bills)
+        s_paid = sum(p["jumlah"] for p in s_payments)
+        
+        breakdown.append({
+            "nis": student["nis"],
+            "nama": student["nama"],
+            "total_tagihan": s_total,
+            "total_dibayar": s_paid,
+            "status": "Lunas" if s_total > 0 and s_total == s_paid else "Belum Lunas"
+        })
+    
+    return {
+        "class_name": class_name,
+        "total_estimasi": total_estimasi,
+        "total_masuk": total_masuk,
+        "total_tunggakan": total_estimasi - total_masuk,
+        "student_count": len(students),
+        "breakdown": breakdown
+    }
+
+@api_router.get("/reports/batch/{batch}")
+async def get_batch_report(batch: str):
+    # Get all students in this batch (angkatan)
+    students = await db.students.find({"angkatan": batch}, {"_id": 0}).to_list(1000)
+    student_ids = [s["id"] for s in students]
+    
+    # Get all bills for these students
+    bills = await db.bills.find({"id_siswa": {"$in": student_ids}}, {"_id": 0}).to_list(10000)
+    
+    # Get all payments for these students
+    payments = await db.payments.find({"id_siswa": {"$in": student_ids}, "status": "diterima"}, {"_id": 0}).to_list(10000)
+    
+    total_estimasi = sum(b["jumlah"] for b in bills)
+    total_masuk = sum(p["jumlah"] for p in payments)
+    
+    # Per class breakdown within batch
+    classes = sorted(list(set(s["kelas"] for s in students)))
+    class_breakdown = []
+    
+    for cls in classes:
+        cls_students = [s for s in students if s["kelas"] == cls]
+        cls_student_ids = [s["id"] for s in cls_students]
+        
+        cls_bills = [b for b in bills if b["id_siswa"] in cls_student_ids]
+        cls_payments = [p for p in payments if p["id_siswa"] in cls_student_ids]
+        
+        c_total = sum(b["jumlah"] for b in cls_bills)
+        c_paid = sum(p["jumlah"] for p in cls_payments)
+        
+        class_breakdown.append({
+            "kelas": cls,
+            "student_count": len(cls_students),
+            "total_tagihan": c_total,
+            "total_dibayar": c_paid,
+            "total_tunggakan": c_total - c_paid
+        })
+    
+    return {
+        "batch": batch,
+        "total_estimasi": total_estimasi,
+        "total_masuk": total_masuk,
+        "total_tunggakan": total_estimasi - total_masuk,
+        "student_count": len(students),
+        "class_breakdown": class_breakdown
+    }
+
 import calendar
 
 @api_router.get("/reports/export-pdf")
@@ -893,106 +1015,188 @@ async def export_excel(bulan: str, tahun: int):
     buffer.seek(0)
     
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}.xlsx"})
-# ... (impor dan fungsi utility lainnya)
 
-@api_router.get("/receipt/bill/{bill_id}")
-async def get_payment_receipt(bill_id: str):
-    # 1. Cari tagihan (bill)
-    bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
-    if not bill:
-        raise HTTPException(status_code=404, detail="Tagihan tidak ditemukan")
-        
-    # 2. Cari pembayaran (payment)
-    payment = await db.payments.find_one({"id_tagihan": bill_id}, {"_id": 0})
-    if not payment:
-        if bill["status"] != "lunas":
-            raise HTTPException(status_code=404, detail="Pembayaran untuk tagihan ini belum dikonfirmasi")
-        payment_date_str = datetime.now(timezone.utc).isoformat()
-    else:
-        payment_date_str = payment["tanggal_bayar"]
+@api_router.get("/reports/student/{student_id}/export-pdf")
+async def export_student_pdf(student_id: str):
+    report = await get_student_report(student_id)
+    student = report['student']
     
-    # 3. Cari data siswa
-    student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
-    if not student:
-        raise HTTPException(status_code=404, detail="Data siswa tidak ditemukan")
-
-    # 4. Buat PDF
     buffer = BytesIO()
-    # Kertas 5x4 inch, margin 0.3 inch (diperkecil agar lebih padat)
-    doc = SimpleDocTemplate(buffer, pagesize=(5*inch, 4*inch), leftMargin=0.3*inch, rightMargin=0.3*inch, topMargin=0.3*inch, bottomMargin=0.3*inch)
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
-    
     styles = getSampleStyleSheet()
-    # Judul sedikit lebih kecil dari sebelumnya (14pt)
-    title_style = ParagraphStyle('Title', parent=styles['h1'], alignment=TA_CENTER, fontSize=14, spaceAfter=10, textColor=colors.HexColor('#1e3a8a'))
-    # Subjudul (Nama Sekolah) sedikit lebih kecil (9pt)
-    subtitle_style = ParagraphStyle('SubTitle', parent=styles['h2'], alignment=TA_CENTER, fontSize=9, spaceAfter=14)
-    # Style normal untuk info tambahan
-    normal_style = ParagraphStyle('Normal', parent=styles['BodyText'], fontSize=9, alignment=TA_LEFT, spaceAfter=6)
-
-    elements.append(Paragraph("BUKTI PEMBAYARAN SPP", title_style))
-    elements.append(Paragraph("SMK MEKAR MURNI", subtitle_style))
     
-    # --- PERBAIKAN DAN PENAMBAHAN DETAIL UNTUK KUITANSI ---
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
+    elements.append(Paragraph(f"LAPORAN PEMBAYARAN SISWA", title_style))
     
-    try:
-        payment_datetime = datetime.fromisoformat(payment_date_str)
-        tanggal_bayar_formatted = payment_datetime.strftime('%d %B %Y')
-        waktu_bayar_formatted = payment_datetime.strftime('%H:%M:%S')
-    except ValueError:
-        tanggal_bayar_formatted = "Data Tanggal Invalid"
-        waktu_bayar_formatted = ""
-
-    # Tambahkan Nomor Kuitansi/ID Pembayaran (Jika ada di Payment)
-    receipt_data = [
-        ["No. Tagihan", ":", bill['id']],
-        ["NIS", ":", student['nis']],
-        ["Nama Siswa", ":", student['nama']],
-        ["Kelas", ":", student['kelas']],
-        ["Pembayaran Bulan", ":", f"{bill['bulan']} {bill['tahun']}"],
-        ["Tanggal Bayar", ":", tanggal_bayar_formatted],
-        ["Waktu Bayar", ":", waktu_bayar_formatted],
-        ["Jumlah Dibayar", ":", f"Rp {bill['jumlah']:,.0f}"],
-        ["Status", ":", bill['status'].upper()],
+    info_data = [
+        [Paragraph(f"Nama: <b>{student['nama']}</b>", styles['Normal']), Paragraph(f"NIS: <b>{student['nis']}</b>", styles['Normal'])],
+        [Paragraph(f"Kelas: <b>{student['kelas']}</b>", styles['Normal']), Paragraph(f"Angkatan: <b>{student['angkatan']}</b>", styles['Normal'])]
     ]
-
-    # Atur lebar kolom agar lebih proporsional
-    table = Table(receipt_data, colWidths=[1.5*inch, 0.1*inch, 2.5*inch])
-    table.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-        ('TOPPADDING', (0, 0), (-1, -1), 2),
-        
-        # Penekanan pada Jumlah dan Status
-        ('FONTNAME', (0, 7), (2, 8), 'Helvetica-Bold'),
-        ('TEXTCOLOR', (2, 7), (2, 7), colors.HexColor('#1e3a8a')), # Warna biru tua untuk jumlah
-        ('TEXTCOLOR', (2, 8), (2, 8), colors.HexColor('#10b981')), # Warna hijau untuk status LUNAS
-        
-        # Pastikan status LUNAS tercetak tebal (Baris ke-8, Kolom ke-2)
-        ('FONTNAME', (2, 8), (2, 8), 'Helvetica-Bold'), 
-    ]))
-    
-    elements.append(table)
+    elements.append(Table(info_data, colWidths=[3*inch, 3*inch]))
     elements.append(Spacer(1, 0.2*inch))
     
-    # Keterangan (Dibuat miring/italic agar rapi)
-    elements.append(Paragraph(
-        "<i>Terima kasih atas pembayaran Anda. Harap simpan bukti ini.</i>", 
-        ParagraphStyle('Footer', parent=styles['BodyText'], fontSize=8, alignment=TA_LEFT, spaceAfter=6, textColor=colors.HexColor('#6b7280'))
-    ))
-
-    # --- AKHIR PERBAIKAN ---
-
+    data = [['No', 'Bulan/Tahun', 'Jumlah', 'Status']]
+    for idx, b in enumerate(report['bills'], 1):
+        data.append([str(idx), f"{b['bulan']} {b['tahun']}", f"Rp {b['jumlah']:,.0f}", b['status'].upper()])
+    
+    summary = report['summary']
+    data.append(['', 'Total Tagihan', f"Rp {summary['total_tagihan']:,.0f}", ''])
+    data.append(['', 'Total Dibayar', f"Rp {summary['total_dibayar']:,.0f}", ''])
+    data.append(['', 'Sisa Tagihan', f"Rp {summary['sisa_tagihan']:,.0f}", ''])
+    
+    t = Table(data, colWidths=[0.5*inch, 2.5*inch, 1.5*inch, 1.5*inch])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a8a')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('GRID', (0, 0), (-1, -4), 1, colors.black),
+        ('FONTNAME', (0, -3), (-1, -1), 'Helvetica-Bold')
+    ]))
+    elements.append(t)
+    
     doc.build(elements)
     buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{student['nis']}.pdf"})
+
+@api_router.get("/reports/class/{class_name}/export-pdf")
+async def export_class_pdf(class_name: str):
+    report = await get_class_report(class_name)
     
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=kuitansi_{student['nis']}_{bill['bulan']}_{bill['tahun']}.pdf"})
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
+    elements.append(Paragraph(f"LAPORAN PEMBAYARAN KELAS {class_name}", title_style))
+    
+    summary_data = [
+        ["Total Estimasi", f"Rp {report['total_estimasi']:,.0f}"],
+        ["Total Masuk", f"Rp {report['total_masuk']:,.0f}"],
+        ["Total Tunggakan", f"Rp {report['total_tunggakan']:,.0f}"],
+        ["Jumlah Siswa", str(report['student_count'])]
+    ]
+    elements.append(Table(summary_data, colWidths=[2*inch, 2*inch]))
+    elements.append(Spacer(1, 0.2*inch))
+    
+    data = [['NIS', 'Nama', 'Tagihan', 'Dibayar', 'Status']]
+    for s in report['breakdown']:
+        data.append([s['nis'], s['nama'], f"Rp {s['total_tagihan']:,.0f}", f"Rp {s['total_dibayar']:,.0f}", s['status']])
+    
+    t = Table(data, colWidths=[1*inch, 2.5*inch, 1.2*inch, 1.2*inch, 1*inch])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a8a')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+    elements.append(t)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_kelas_{class_name}.pdf"})
+
+@api_router.get("/reports/batch/{batch}/export-pdf")
+async def export_batch_pdf(batch: str):
+    report = await get_batch_report(batch)
+    
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
+    elements.append(Paragraph(f"LAPORAN PEMBAYARAN ANGKATAN {batch}", title_style))
+    
+    data = [['Kelas', 'Siswa', 'Tagihan', 'Dibayar', 'Tunggakan']]
+    for c in report['class_breakdown']:
+        data.append([c['kelas'], str(c['student_count']), f"Rp {c['total_tagihan']:,.0f}", f"Rp {c['total_dibayar']:,.0f}", f"Rp {c['total_tunggakan']:,.0f}"])
+    
+    data.append(['TOTAL', str(report['student_count']), f"Rp {report['total_estimasi']:,.0f}", f"Rp {report['total_masuk']:,.0f}", f"Rp {report['total_tunggakan']:,.0f}"])
+    
+    t = Table(data, colWidths=[1.5*inch, 0.8*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a8a')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold')
+    ]))
+    elements.append(t)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_angkatan_{batch}.pdf"})
+
+@api_router.get("/reports/student/{student_id}/export-excel")
+async def export_student_excel(student_id: str):
+    report = await get_student_report(student_id)
+    student = report['student']
+    
+    data_list = []
+    for b in report['bills']:
+        data_list.append({
+            'Bulan': b['bulan'],
+            'Tahun': b['tahun'],
+            'Jumlah': b['jumlah'],
+            'Status': b['status'].upper()
+        })
+    
+    df = pd.DataFrame(data_list)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Laporan Siswa')
+    buffer.seek(0)
+    
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{student['nis']}.xlsx"})
+
+@api_router.get("/reports/class/{class_name}/export-excel")
+async def export_class_excel(class_name: str):
+    report = await get_class_report(class_name)
+    
+    data_list = []
+    for s in report['breakdown']:
+        data_list.append({
+            'NIS': s['nis'],
+            'Nama': s['nama'],
+            'Total Tagihan': s['total_tagihan'],
+            'Total Dibayar': s['total_dibayar'],
+            'Tunggakan': s['total_tagihan'] - s['total_dibayar'],
+            'Status': s['status']
+        })
+    
+    df = pd.DataFrame(data_list)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=f'Kelas {class_name}')
+    buffer.seek(0)
+    
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_kelas_{class_name}.xlsx"})
+
+@api_router.get("/reports/batch/{batch}/export-excel")
+async def export_batch_excel(batch: str):
+    report = await get_batch_report(batch)
+    
+    data_list = []
+    for c in report['class_breakdown']:
+        data_list.append({
+            'Kelas': c['kelas'],
+            'Jumlah Siswa': c['student_count'],
+            'Total Tagihan': c['total_tagihan'],
+            'Total Dibayar': c['total_dibayar'],
+            'Tunggakan': c['total_tunggakan']
+        })
+    
+    df = pd.DataFrame(data_list)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=f'Angkatan {batch}')
+    buffer.seek(0)
+    
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_angkatan_{batch}.xlsx"})
+# ---------------------------
 # ---------------------------
 
 # Student Portal Routes
-@api_router.get("/student/profile/{student_id}")
+
 # WhatsApp Mock
 @api_router.post("/whatsapp/send")
 async def send_whatsapp(nomor: str, pesan: str):

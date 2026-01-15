@@ -98,7 +98,7 @@ const AdminBills = () => {
       <div data-testid="admin-bills-page" className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{fontFamily: 'Space Grotesk, sans-serif'}}>Kelola Tagihan</h1>
+            <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Kelola Tagihan</h1>
             <p className="text-gray-600">Generate dan konfirmasi pembayaran SPP</p>
           </div>
           <Button
@@ -164,13 +164,12 @@ const AdminBills = () => {
                         <TableCell className="font-semibold text-green-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
                         <TableCell>
                           <span
-                            className={`px-3 py-1 rounded-full text-sm font-medium ${
-                              bill.status === 'lunas'
+                            className={`px-3 py-1 rounded-full text-sm font-medium ${bill.status === 'lunas'
                                 ? 'bg-green-100 text-green-700'
                                 : bill.status === 'menunggu_konfirmasi'
-                                ? 'bg-purple-100 text-purple-700'
-                                : 'bg-yellow-100 text-yellow-700'
-                            }`}
+                                  ? 'bg-purple-100 text-purple-700'
+                                  : 'bg-yellow-100 text-yellow-700'
+                              }`}
                           >
                             {bill.status.toUpperCase().replace('_', ' ')}
                           </span>
@@ -192,7 +191,7 @@ const AdminBills = () => {
                           {/* JIKA STATUS MENUNGGU KONFIRMASI (Ada pembayaran online) */}
                           {bill.status === 'menunggu_konfirmasi' && (
                             <div className="flex flex-col space-y-2">
-                              
+
                               {/* --- Menampilkan Info Pengirim --- */}
                               {(() => {
                                 const payment = payments.find(p => p.id_tagihan === bill.id);
@@ -235,16 +234,16 @@ const AdminBills = () => {
                                         variant="outline"
                                         onClick={async () => {
                                           try {
-                                            const resp = await axios.get(`${API}/payments/${payment.id}/receipt`, {
+                                            const resp = await axios.get(`${API}/payments/${payment.id}/receipt/file`, {
                                               params: { token },
                                               responseType: 'blob'
                                             });
                                             // Ambil tipe konten (image/jpeg atau application/pdf)
                                             const contentType = resp.headers['content-type'];
                                             const url = window.URL.createObjectURL(new Blob([resp.data], { type: contentType }));
-                                            
+
                                             setPreviewUrl(url);
-                                            setPreviewType(contentType); 
+                                            setPreviewType(contentType);
                                             setShowPreview(true);
                                           } catch (err) {
                                             toast.error('Gagal membuka bukti pembayaran');
@@ -262,7 +261,7 @@ const AdminBills = () => {
                               </div>
                             </div>
                           )}
-                          
+
                           {/* JIKA STATUS LUNAS */}
                           {bill.status === 'lunas' && (
                             <span className="text-green-600 text-sm font-medium">✓ Lunas</span>
@@ -276,47 +275,47 @@ const AdminBills = () => {
             </div>
           </CardContent>
         </Card>
-      
-          {/* Preview Dialog */}
-          <Dialog open={showPreview} onOpenChange={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>
-            <DialogContent className="sm:max-w-3xl w-full h-[80vh]">
-              <DialogHeader>
-                <DialogTitle>Bukti Pembayaran</DialogTitle>
-              </DialogHeader>
-              <div className="h-[70vh] flex items-center justify-center bg-gray-100 rounded-md overflow-hidden">
-                {previewUrl ? (
-                   previewType && previewType.startsWith('image/') ? (
-                    // Tampilan untuk Gambar
-                    <img 
-                      src={previewUrl} 
-                      alt="Bukti Pembayaran" 
-                      className="max-w-full max-h-full object-contain" 
-                    />
-                  ) : (
-                    // Tampilan untuk PDF
-                    <iframe src={previewUrl} title="Bukti Pembayaran" className="w-full h-full" />
-                  )
+
+        {/* Preview Dialog */}
+        <Dialog open={showPreview} onOpenChange={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>
+          <DialogContent className="sm:max-w-3xl w-full h-[80vh]">
+            <DialogHeader>
+              <DialogTitle>Bukti Pembayaran</DialogTitle>
+            </DialogHeader>
+            <div className="h-[70vh] flex items-center justify-center bg-gray-100 rounded-md overflow-hidden">
+              {previewUrl ? (
+                previewType && previewType.startsWith('image/') ? (
+                  // Tampilan untuk Gambar
+                  <img
+                    src={previewUrl}
+                    alt="Bukti Pembayaran"
+                    className="max-w-full max-h-full object-contain"
+                  />
                 ) : (
-                  <p className="text-center text-gray-500">Memuat...</p>
-                )}
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>Tutup</Button>
-                <Button onClick={() => { 
-                  if (previewUrl) { 
-                    const link = document.createElement('a'); 
-                    link.href = previewUrl; 
-                    // Download sesuai ekstensi
-                    const ext = previewType === 'application/pdf' ? '.pdf' : '.jpg';
-                    link.download = `bukti_pembayaran${ext}`; 
-                    document.body.appendChild(link); 
-                    link.click(); 
-                    link.remove(); 
-                  } 
-                }} className="bg-blue-900">Unduh</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                  // Tampilan untuk PDF
+                  <iframe src={previewUrl} title="Bukti Pembayaran" className="w-full h-full" />
+                )
+              ) : (
+                <p className="text-center text-gray-500">Memuat...</p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>Tutup</Button>
+              <Button onClick={() => {
+                if (previewUrl) {
+                  const link = document.createElement('a');
+                  link.href = previewUrl;
+                  // Download sesuai ekstensi
+                  const ext = previewType === 'application/pdf' ? '.pdf' : '.jpg';
+                  link.download = `bukti_pembayaran${ext}`;
+                  document.body.appendChild(link);
+                  link.click();
+                  link.remove();
+                }
+              }} className="bg-blue-900">Unduh</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Generate Dialog */}

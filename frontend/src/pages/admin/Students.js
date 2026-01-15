@@ -25,6 +25,7 @@ const AdminStudents = () => {
     nama: '',
     kelas: '',
     no_wa: '',
+    angkatan: '',
     username: '',
     password: ''
   });
@@ -71,7 +72,7 @@ const AdminStudents = () => {
           status: 'belum'
         }
       });
-      
+
       const unpaidBills = response.data;
 
       if (unpaidBills.length === 0) {
@@ -86,15 +87,15 @@ const AdminStudents = () => {
 
       unpaidBills.forEach((bill, index) => {
         total += bill.jumlah;
-        // Format: - Januari 2024: Rp 500.000
-        detailTagihan += `- ${bill.bulan} ${bill.tahun}: Rp ${bill.jumlah.toLocaleString('id-ID')}\n`;
+        // Format: * Januari 2026: Rp 500.000
+        detailTagihan += `* ${bill.bulan} ${bill.tahun}: Rp ${bill.jumlah.toLocaleString('id-ID')}\n`;
       });
 
-      // 3. Format Pesan WhatsApp yang LEBIH BAGUS & RAPIH
+      // 3. Format Pesan WhatsApp (DIPERBARUI)
       const message = `*Pemberitahuan Tagihan SPP - SMK MEKAR MURNI*\n\n` +
         `Kepada Yth.\n` +
         `Wali Murid dari:\n` +
-        `Nama : *${student.nama}*\n` +
+        `Nama : *${student.nama.toUpperCase()}*\n` +
         `Kelas : ${student.kelas}\n\n` +
         `Dengan hormat,\n` +
         `Melalui pesan ini, kami menginformasikan rincian tagihan SPP yang belum terbayarkan sebagai berikut:\n\n` +
@@ -104,6 +105,8 @@ const AdminStudents = () => {
         `----------------------------------\n\n` +
         `Mohon untuk segera melakukan pembayaran agar proses administrasi siswa tidak terhambat.\n\n` +
         `Jika pembayaran sudah dilakukan, mohon abaikan pesan ini atau kirimkan bukti pembayaran.\n\n` +
+        `Jadwal pembayaran di sekolah:\n` +
+        `*Senin - Sabtu: 08:00 - 12:00*\n\n` +
         `Terima kasih atas perhatian dan kerjasamanya.\n\n` +
         `Hormat kami,\n` +
         `*Tata Usaha SMK MEKAR MURNI*`;
@@ -117,7 +120,7 @@ const AdminStudents = () => {
       // 5. Buka WhatsApp Web
       const encodedMessage = encodeURIComponent(message);
       window.open(`https://wa.me/${phoneNumber}?text=${encodedMessage}`, '_blank');
-      
+
       toast.dismiss(toastId);
       toast.success('Membuka WhatsApp...');
 
@@ -137,6 +140,7 @@ const AdminStudents = () => {
       nama: '',
       kelas: classes[0]?.nama_kelas || '',
       no_wa: '',
+      angkatan: '',
       username: '',
       password: ''
     });
@@ -201,7 +205,7 @@ const AdminStudents = () => {
       <div data-testid="admin-students-page" className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{fontFamily: 'Space Grotesk, sans-serif'}}>Data Siswa</h1>
+            <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Data Siswa</h1>
             <p className="text-gray-600">Kelola data siswa sekolah</p>
           </div>
           <Button
@@ -237,6 +241,7 @@ const AdminStudents = () => {
                     <TableHead>NIS</TableHead>
                     <TableHead>Nama</TableHead>
                     <TableHead>Kelas</TableHead>
+                    <TableHead>Angkatan</TableHead>
                     <TableHead>No. WhatsApp</TableHead>
                     <TableHead>Username</TableHead>
                     <TableHead className="text-right">Aksi</TableHead>
@@ -259,6 +264,7 @@ const AdminStudents = () => {
                             {student.kelas}
                           </span>
                         </TableCell>
+                        <TableCell>{student.angkatan}</TableCell>
                         <TableCell>{student.no_wa}</TableCell>
                         <TableCell>{student.username}</TableCell>
                         <TableCell className="text-right">
@@ -273,7 +279,7 @@ const AdminStudents = () => {
                             >
                               <MessageCircle className="w-4 h-4" />
                             </Button>
-                            
+
                             <Button
                               data-testid={`edit-student-${student.nis}`}
                               variant="ghost"
@@ -357,6 +363,17 @@ const AdminStudents = () => {
                 value={currentStudent.no_wa}
                 onChange={(e) => setCurrentStudent({ ...currentStudent, no_wa: e.target.value })}
                 placeholder="08xxxxxxxxxx"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="angkatan">Angkatan (Tahun)</Label>
+              <Input
+                id="angkatan"
+                data-testid="angkatan-input"
+                value={currentStudent.angkatan}
+                onChange={(e) => setCurrentStudent({ ...currentStudent, angkatan: e.target.value })}
+                placeholder="Contoh: 2023"
                 required
               />
             </div>

@@ -63,7 +63,7 @@ const AdminDashboard = () => {
     <Layout>
       <div data-testid="admin-dashboard" className="space-y-8">
         <div>
-          <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{fontFamily: 'Space Grotesk, sans-serif'}}>Dashboard</h1>
+          <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Dashboard</h1>
           <p className="text-gray-600">Selamat datang di sistem pembayaran SPP</p>
         </div>
 
@@ -98,10 +98,13 @@ const AdminDashboard = () => {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={stats?.chart_data || []}>
+              <LineChart data={stats?.chart_data || []} margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="bulan" stroke="#6b7280" />
-                <YAxis stroke="#6b7280" />
+                <YAxis
+                  stroke="#6b7280"
+                  tickFormatter={(value) => `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact' }).format(value)}`}
+                />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
                   formatter={(value) => `Rp ${value.toLocaleString('id-ID')}`}

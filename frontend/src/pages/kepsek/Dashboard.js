@@ -41,7 +41,7 @@ const KepsekDashboard = () => {
     <Layout>
       <div data-testid="kepsek-dashboard" className="space-y-8">
         <div>
-          <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{fontFamily: 'Space Grotesk, sans-serif'}}>Dashboard</h1>
+          <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Dashboard</h1>
           <p className="text-gray-600">Ringkasan pemasukan keuangan sekolah.</p>
         </div>
 
@@ -72,10 +72,10 @@ const KepsekDashboard = () => {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={stats.chart_data}>
+              <BarChart data={stats.chart_data} margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="tahun" stroke="#6b7280" />
-                <YAxis 
+                <YAxis
                   stroke="#6b7280"
                   tickFormatter={(value) => `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact' }).format(value)}`}
                 />
