@@ -50,13 +50,6 @@ const MasterDashboard = () => {
             icon: ShieldCheck,
             path: '/master/staff',
             color: 'bg-blue-600'
-        },
-        {
-            title: 'Pengaturan Sekolah',
-            desc: 'Atur nama, alamat, dan rekening pembayaran sekolah',
-            icon: Settings,
-            path: '/master/settings',
-            color: 'bg-indigo-600'
         }
     ];
 

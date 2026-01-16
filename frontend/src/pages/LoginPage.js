@@ -34,14 +34,24 @@ const LoginPage = () => {
     }
   };
 
+  const logoUrl = `${process.env.REACT_APP_BACKEND_URL}/uploads/logo.png`;
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 p-4">
       <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiYSgxMjMsMTM0LDE1NCwwLjA1KSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-40"></div>
 
       <Card data-testid="login-card" className="w-full max-w-md relative z-10 shadow-2xl border-0 backdrop-blur-sm bg-white/90">
         <CardHeader className="text-center space-y-4 pb-8">
-          <div className="mx-auto w-20 h-20 bg-gradient-to-br from-blue-900 to-indigo-700 rounded-2xl flex items-center justify-center shadow-lg transform hover:scale-105 transition-transform">
-            <School className="w-12 h-12 text-white" />
+          <div className="mx-auto w-24 h-24 bg-white rounded-2xl flex items-center justify-center shadow-lg transform hover:scale-105 transition-transform p-3">
+            <img
+              src={logoUrl}
+              alt="Logo"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                e.target.onerror = null;
+                e.target.src = 'https://ui-avatars.com/api/?name=SMK&background=fff&color=1e3a8a';
+              }}
+            />
           </div>
           <div>
             <CardTitle className="text-3xl font-bold text-blue-900" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>SPP System</CardTitle>

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -8,7 +9,13 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import bcrypt # Added for fix
 from pathlib import Path
+
+# Fix for Passlib/Bcrypt incompatibility error
+if not hasattr(bcrypt, "__about__"):
+    bcrypt.__about__ = type("About", (object,), {"__version__": bcrypt.__version__})
+
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Annotated
 import uuid
@@ -21,7 +28,7 @@ import pandas as pd
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, letter
@@ -86,6 +93,7 @@ class User(BaseModel):
     password: str
     nama: str
     role: str  # admin, kepsek, siswa
+    profile_pic: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class Student(BaseModel):
@@ -98,6 +106,7 @@ class Student(BaseModel):
     no_wa: str
     username: str
     password: str
+    profile_pic: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class Class(BaseModel):
@@ -233,116 +242,153 @@ async def get_payment_receipt(bill_id: str):
 
     # 5. Buat PDF
     buffer = BytesIO()
-    # Gunakan ukuran yang pas untuk layout lebar (landscape-ish)
-    doc = SimpleDocTemplate(buffer, pagesize=(8.5*inch, 5.5*inch), leftMargin=0.5*inch, rightMargin=0.5*inch, topMargin=0.3*inch, bottomMargin=0.3*inch)
+    # Half-Letter Landscape (8.5 x 5.5 inch)
+    doc = SimpleDocTemplate(buffer, pagesize=(8.5*inch, 5.5*inch), leftMargin=0.4*inch, rightMargin=0.4*inch, topMargin=0.3*inch, bottomMargin=0.3*inch)
     elements = []
     
     styles = getSampleStyleSheet()
     
-    # Define styles for new layout (slightly smaller)
-    school_header_style = ParagraphStyle('SchoolHeader', fontSize=11, alignment=TA_CENTER, fontName='Courier-Bold', leading=13)
-    addr_header_style = ParagraphStyle('AddrHeader', fontSize=9, alignment=TA_CENTER, fontName='Courier', leading=11)
-    title_receipt_style = ParagraphStyle('TitleReceipt', fontSize=10, alignment=TA_CENTER, fontName='Courier-Bold', spaceBefore=8, spaceAfter=8)
-    info_label_style = ParagraphStyle('InfoLabel', fontSize=9, fontName='Courier')
-    info_value_style = ParagraphStyle('InfoValue', fontSize=9, fontName='Courier-Bold')
-    table_header_style = ParagraphStyle('TableHeader', fontSize=9, fontName='Courier-Bold', alignment=TA_CENTER)
-    table_content_style = ParagraphStyle('TableContent', fontSize=9, fontName='Courier')
-    table_numeric_style = ParagraphStyle('TableNumeric', fontSize=9, fontName='Courier', alignment=TA_RIGHT)
-    total_label_style = ParagraphStyle('TotalLabel', fontSize=9, fontName='Courier', alignment=TA_RIGHT)
-    total_value_style = ParagraphStyle('TotalValue', fontSize=9, fontName='Courier-Bold', alignment=TA_RIGHT)
-    footer_sign_style = ParagraphStyle('FooterSign', fontSize=9, fontName='Courier', alignment=TA_CENTER)
+    # Define styles with Courier (Monospace)
+    f_bold = 'Courier-Bold'
+    f_norm = 'Courier'
+    
+    header_style = ParagraphStyle('Header', fontSize=12, alignment=TA_CENTER, fontName=f_bold, leading=14)
+    addr_style = ParagraphStyle('Addr', fontSize=9, alignment=TA_CENTER, fontName=f_norm, leading=11)
+    title_style = ParagraphStyle('Title', fontSize=11, alignment=TA_CENTER, fontName=f_bold, spaceBefore=2, spaceAfter=2)
+    
+    label_style = ParagraphStyle('Label', fontSize=9, fontName=f_norm)
+    value_style = ParagraphStyle('Value', fontSize=9, fontName=f_bold)
+    
+    table_header = ParagraphStyle('THeader', fontSize=9, fontName=f_bold, alignment=TA_CENTER)
+    table_cell = ParagraphStyle('TCell', fontSize=9, fontName=f_norm)
+    table_right = ParagraphStyle('TRight', fontSize=9, fontName=f_norm, alignment=TA_RIGHT)
+    table_bold_right = ParagraphStyle('TBoldRight', fontSize=9, fontName=f_bold, alignment=TA_RIGHT)
+    
+    footer_style = ParagraphStyle('Footer', fontSize=9, fontName=f_norm, alignment=TA_CENTER)
 
     def p(text, style):
         return Paragraph(str(text), style)
 
-    # 1. Header (Centered Name & Address)
-    elements.append(p(school['nama_sekolah'].upper(), school_header_style))
-    elements.append(p(school['alamat'], addr_header_style))
-    elements.append(p(f"Telp: {school['no_telp']}", addr_header_style))
+    # --- 1. Header with Logo ---
+    logo_path = uploads_dir / "logo.png"
+    if logo_path.exists():
+        # Create a table for header: [Logo, School Info]
+        logo_img = Image(str(logo_path), width=0.7*inch, height=0.7*inch)
+        
+        school_info = [
+            [p(school['nama_sekolah'].upper(), header_style)],
+            [p(school['alamat'], addr_style)],
+            [p(f"Telp: {school['no_telp']}", addr_style)]
+        ]
+        info_table = Table(school_info, colWidths=[6.5*inch])
+        info_table.setStyle(TableStyle([
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ]))
+        
+        header_table = Table([[logo_img, info_table]], colWidths=[0.8*inch, 6.7*inch])
+        header_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ]))
+        elements.append(header_table)
+    else:
+        elements.append(p(school['nama_sekolah'].upper(), header_style))
+        elements.append(p(school['alamat'], addr_style))
+        elements.append(p(f"Telp: {school['no_telp']}", addr_style))
     
-    # Dashed Line
-    elements.append(p("-" * 86, addr_header_style))
+    # Separator Line
+    line_str = "-" * 85
+    elements.append(p(line_str, addr_style))
     
-    # 2. Receipt Title
-    elements.append(p("BUKTI PEMBAYARAN", title_receipt_style))
+    # --- 2. Title ---
+    elements.append(p("BUKTI PEMBAYARAN", title_style))
     
-    # 3. Two Column Info Section
-    info_col1 = [
-        [p("No Transaksi", info_label_style), p(":", info_label_style), p(payment['id'][:12].upper(), info_value_style)],
-        [p("No Induk", info_label_style), p(":", info_label_style), p(student['nis'], info_value_style)],
-        [p("Nama", info_label_style), p(":", info_label_style), p(student['nama'], info_value_style)],
+    # --- 3. Info Section (Two Columns) ---
+    # Convert ISO date if needed
+    tgl_bayar = payment['tanggal_bayar']
+    if isinstance(tgl_bayar, str):
+        try:
+            tgl_dt = datetime.fromisoformat(tgl_bayar.replace('Z', '+00:00'))
+            tgl_str = tgl_dt.strftime('%d-%m-%Y %H:%M:%S')
+        except:
+            tgl_str = tgl_bayar
+    else:
+        tgl_str = tgl_bayar.strftime('%d-%m-%Y %H:%M:%S')
+
+    info_data = [
+        [p("No Transaksi", label_style), p(":", label_style), p(payment['id'][:12].upper(), value_style), 
+         p("", label_style), # gap
+         p("Tanggal", label_style), p(":", label_style), p(tgl_str, value_style)],
+        
+        [p("No Induk", label_style), p(":", label_style), p(student['nis'], value_style), 
+         p("", label_style), # gap
+         p("Kelas", label_style), p(":", label_style), p(student['kelas'], value_style)],
+        
+        [p("Nama", label_style), p(":", label_style), p(student['nama'], value_style), 
+         p("", label_style), p("", label_style), p("", label_style), p("", label_style)],
     ]
-    info_col2 = [
-        [p("Tanggal", info_label_style), p(":", info_label_style), p(datetime.fromisoformat(payment['tanggal_bayar']).strftime('%d-%m-%Y %H:%M:%S'), info_value_style)],
-        [p("Kelas", info_label_style), p(":", info_label_style), p(student['kelas'], info_value_style)],
-    ]
     
-    info_table_data = [
-        [Table(info_col1, colWidths=[1.2*inch, 0.1*inch, 2.5*inch], style=TableStyle([('LEFTPADDING', (0,0), (-1,-1), 0), ('RIGHTPADDING', (0,0), (-1,-1), 0), ('TOPPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 2)])),
-         Table(info_col2, colWidths=[1.0*inch, 0.1*inch, 2.5*inch], style=TableStyle([('LEFTPADDING', (0,0), (-1,-1), 0), ('RIGHTPADDING', (0,0), (-1,-1), 0), ('TOPPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 2)]))]
-    ]
-    
-    main_info_table = Table(info_table_data, colWidths=[4*inch, 3.5*inch])
-    main_info_table.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+    info_table = Table(info_data, colWidths=[1.1*inch, 0.1*inch, 2.5*inch, 0.5*inch, 0.8*inch, 0.1*inch, 2.5*inch])
+    info_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
     ]))
-    elements.append(main_info_table)
-    elements.append(Spacer(1, 0.1*inch))
+    elements.append(info_table)
+    elements.append(p(line_str, addr_style)) # Line after info
     
-    # Dashed Line before table
-    elements.append(p("-" * 87, addr_header_style))
-    
-    # 4. Itemized Table
-    table_data = [
-        [p("No", table_header_style), p("Nama Pembayaran", table_header_style), p("Nominal", table_header_style)],
-        [p("1", table_content_style), p(f"BIAYA SPP {bill['tahun']} Bulan {bill['bulan']}", table_content_style), p(f"{bill['jumlah']:,.0f}", table_numeric_style)],
+    # --- 4. Items Table ---
+    # Reduced spacing to ensure one page
+    item_data = [
+        [p("No", table_header), p("Nama Pembayaran", table_header), p("Nominal", table_header)],
+        [p("1", table_cell), p(f"BIAYA SPP {bill['tahun']} Bulan {bill['bulan']}", table_cell), p(f"{bill['jumlah']:,.0f}", table_right)],
     ]
     
-    # Fill with some empty rows to make it look like the sample if needed, but here we just have one item
-    
-    item_table = Table(table_data, colWidths=[0.5*inch, 5.0*inch, 1.5*inch])
+    item_table = Table(item_data, colWidths=[0.5*inch, 5.5*inch, 1.6*inch])
     item_table.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('LINEBELOW', (0,0), (-1,0), 0.5, colors.black),
+        ('TOPPADDING', (0,0), (-1,-1), 2),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 2),
     ]))
     elements.append(item_table)
+    elements.append(p(line_str, addr_style))
     
-    # Dashed Line after table content
-    elements.append(Spacer(1, 0.2*inch))
-    elements.append(p("-" * 87, addr_header_style))
-    
-    # 5. Totals Section
+    # --- 5. Totals Section ---
     total_data = [
-        ["", p("Total   :", total_label_style), p(f"{bill['jumlah']:,.0f}", total_value_style)],
-        ["", p("Tunai   :", total_label_style), p(f"{bill['jumlah']:,.0f}", total_value_style)],
-        ["", p("Kembali :", total_label_style), p("0", total_value_style)],
+        [p("", table_cell), p("Total   :", table_bold_right), p(f"{bill['jumlah']:,.0f}", table_bold_right)],
+        [p("", table_cell), p("Tunai   :", table_cell), p(f"{bill['jumlah']:,.0f}", table_right)],
+        [p("", table_cell), p("Kembali :", table_cell), p("0", table_right)],
     ]
-    total_table = Table(total_data, colWidths=[4.5*inch, 1.0*inch, 1.5*inch])
+    total_table = Table(total_data, colWidths=[5.0*inch, 1.0*inch, 1.6*inch])
     total_table.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
     ]))
     elements.append(total_table)
+    elements.append(p(line_str, addr_style))
     
-    # Dashed Line after totals
-    elements.append(p("-" * 87, addr_header_style))
-    
-    # 6. Signatures Footer
+    # --- 6. Signature Section ---
+    # Signature moved up and made more compact
     elements.append(Spacer(1, 0.1*inch))
-    sig_elements = [
-        [p(f"Indonesia, {datetime.now().strftime('%d-%m-%Y')}", footer_sign_style)],
-        [p("Petugas", footer_sign_style)],
-        [Spacer(1, 0.4*inch)],
-        [p("Admin", footer_sign_style)],
+    
+    tgl_now = datetime.now().strftime('%d-%m-%Y')
+    sig_data = [
+        ["", p(f"Indonesia, {tgl_now}", footer_style)],
+        ["", p("Petugas", footer_style)],
+        ["", Spacer(1, 0.2*inch)], # reduced from 0.3
+        ["", p("Admin", footer_style)],
     ]
-    sig_table = Table(sig_elements, colWidths=[7.0*inch]) # Centered/Right aligned signature
+    
+    sig_table = Table(sig_data, colWidths=[5.5*inch, 1.8*inch])
     sig_table.setStyle(TableStyle([
-        ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
-        ('LEFTPADDING', (0,0), (-1,-1), 4.5*inch),
+        ('ALIGN', (1,0), (1,-1), 'CENTER'),
     ]))
     elements.append(sig_table)
-
+    
     doc.build(elements)
     buffer.seek(0)
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=kuitansi_{student['nis']}_{bill['bulan']}_{bill['tahun']}.pdf"})
@@ -523,9 +569,9 @@ async def get_school_profile():
     profile = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
     return profile
 
-@api_router.put("/master/school-profile")
+@api_router.put("/admin/school-profile")
 async def update_school_profile(profile_data: SchoolProfileUpdate, current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") != "master":
+    if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Not authorized")
     
     doc = profile_data.model_dump()
@@ -867,6 +913,48 @@ async def get_dashboard_stats(current_user: Annotated[dict, Depends(get_current_
         "siswa_menunggak": siswa_menunggak,
         "chart_data": chart_data
     }
+
+@api_router.get("/dashboard/arrears-detail")
+async def get_arrears_detail(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Fetch all unpaid bills
+    unpaid_bills = await db.bills.find({"status": "belum"}, {"_id": 0}).to_list(5000)
+    
+    # Group by student
+    student_arrears = {}
+    for bill in unpaid_bills:
+        id_siswa = bill["id_siswa"]
+        if id_siswa not in student_arrears:
+            student_arrears[id_siswa] = {
+                "total_tunggakan": 0,
+                "count": 0,
+                "detail_bulan": []
+            }
+        student_arrears[id_siswa]["total_tunggakan"] += bill["jumlah"]
+        student_arrears[id_siswa]["count"] += 1
+        student_arrears[id_siswa]["detail_bulan"].append(f"{bill['bulan']} {bill['tahun']}")
+    
+    # Enrich with student data
+    result = []
+    for id_siswa, data in student_arrears.items():
+        student = await db.students.find_one({"id": id_siswa}, {"_id": 0})
+        if student:
+            result.append({
+                "id": id_siswa,
+                "nis": student["nis"],
+                "nama": student["nama"],
+                "kelas": student["kelas"],
+                "total_tunggakan": data["total_tunggakan"],
+                "bulan_count": data["count"],
+                "detail_bulan": data["detail_bulan"]
+            })
+            
+    # Sort by total_tunggakan descending
+    result.sort(key=lambda x: x["total_tunggakan"], reverse=True)
+    
+    return result
     
 @api_router.get("/reports/annual")
 async def get_annual_report(current_user: Annotated[dict, Depends(get_current_user)]):
@@ -1104,8 +1192,36 @@ async def export_pdf(bulan: str, tahun: int, current_user: Annotated[dict, Depen
         alignment=TA_CENTER
     )
     
+    # --- Header with Logo ---
+    school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
+    if not school:
+        school = {"nama_sekolah": "SMK MEKAR MURNI", "alamat": "Jl. Pendidikan No. 123", "no_telp": "-"}
+
+    h_style = ParagraphStyle('RepHeader', fontSize=14, fontName='Helvetica-Bold', alignment=TA_CENTER)
+    a_style = ParagraphStyle('RepAddr', fontSize=10, fontName='Helvetica', alignment=TA_CENTER)
+    
+    logo_path = uploads_dir / "logo.png"
+    if logo_path.exists():
+        logo_img = Image(str(logo_path), width=0.8*inch, height=0.8*inch)
+        school_info = [
+            [Paragraph(school['nama_sekolah'].upper(), h_style)],
+            [Paragraph(school['alamat'], a_style)],
+            [Paragraph(f"Telp: {school['no_telp']}", a_style)]
+        ]
+        info_table = Table(school_info, colWidths=[5*inch])
+        header_table = Table([[logo_img, info_table]], colWidths=[1*inch, 5.5*inch])
+        header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        elements.append(header_table)
+    else:
+        elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
+        elements.append(Paragraph(school['alamat'], a_style))
+    
+    elements.append(Spacer(1, 0.1*inch))
+    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
     # Title
-    title = Paragraph(f"Laporan Pembayaran SPP<br/>{bulan} {tahun}<br/>SMK MEKAR MURNI", title_style)
+    title = Paragraph(f"LAPORAN PEMBAYARAN SPP BULANAN<br/>{bulan} {tahun}", title_style)
     elements.append(title)
     elements.append(Spacer(1, 0.2*inch))
     
@@ -1197,6 +1313,35 @@ async def export_student_pdf(student_id: str, current_user: Annotated[dict, Depe
     styles = getSampleStyleSheet()
     
     title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
+    
+    # --- Header with Logo ---
+    school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
+    if not school:
+        school = {"nama_sekolah": "SMK MEKAR MURNI", "alamat": "Jl. Pendidikan No. 123", "no_telp": "-"}
+
+    h_style = ParagraphStyle('RepHeader', fontSize=14, fontName='Helvetica-Bold', alignment=TA_CENTER)
+    a_style = ParagraphStyle('RepAddr', fontSize=10, fontName='Helvetica', alignment=TA_CENTER)
+    
+    logo_path = uploads_dir / "logo.png"
+    if logo_path.exists():
+        logo_img = Image(str(logo_path), width=0.8*inch, height=0.8*inch)
+        school_info = [
+            [Paragraph(school['nama_sekolah'].upper(), h_style)],
+            [Paragraph(school['alamat'], a_style)],
+            [Paragraph(f"Telp: {school['no_telp']}", a_style)]
+        ]
+        info_table = Table(school_info, colWidths=[5*inch])
+        header_table = Table([[logo_img, info_table]], colWidths=[1*inch, 5.5*inch])
+        header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        elements.append(header_table)
+    else:
+        elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
+        elements.append(Paragraph(school['alamat'], a_style))
+    
+    elements.append(Spacer(1, 0.1*inch))
+    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
     elements.append(Paragraph(f"LAPORAN PEMBAYARAN SISWA", title_style))
     
     info_data = [
@@ -1239,6 +1384,35 @@ async def export_class_pdf(class_name: str, current_user: Annotated[dict, Depend
     styles = getSampleStyleSheet()
     
     title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
+    
+    # --- Header with Logo ---
+    school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
+    if not school:
+        school = {"nama_sekolah": "SMK MEKAR MURNI", "alamat": "Jl. Pendidikan No. 123", "no_telp": "-"}
+
+    h_style = ParagraphStyle('RepHeader', fontSize=14, fontName='Helvetica-Bold', alignment=TA_CENTER)
+    a_style = ParagraphStyle('RepAddr', fontSize=10, fontName='Helvetica', alignment=TA_CENTER)
+    
+    logo_path = uploads_dir / "logo.png"
+    if logo_path.exists():
+        logo_img = Image(str(logo_path), width=0.8*inch, height=0.8*inch)
+        school_info = [
+            [Paragraph(school['nama_sekolah'].upper(), h_style)],
+            [Paragraph(school['alamat'], a_style)],
+            [Paragraph(f"Telp: {school['no_telp']}", a_style)]
+        ]
+        info_table = Table(school_info, colWidths=[5*inch])
+        header_table = Table([[logo_img, info_table]], colWidths=[1*inch, 5.5*inch])
+        header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        elements.append(header_table)
+    else:
+        elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
+        elements.append(Paragraph(school['alamat'], a_style))
+    
+    elements.append(Spacer(1, 0.1*inch))
+    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
     elements.append(Paragraph(f"LAPORAN PEMBAYARAN KELAS {class_name}", title_style))
     
     summary_data = [
@@ -1276,6 +1450,35 @@ async def export_batch_pdf(batch: str, current_user: Annotated[dict, Depends(get
     styles = getSampleStyleSheet()
     
     title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
+    
+    # --- Header with Logo ---
+    school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
+    if not school:
+        school = {"nama_sekolah": "SMK MEKAR MURNI", "alamat": "Jl. Pendidikan No. 123", "no_telp": "-"}
+
+    h_style = ParagraphStyle('RepHeader', fontSize=14, fontName='Helvetica-Bold', alignment=TA_CENTER)
+    a_style = ParagraphStyle('RepAddr', fontSize=10, fontName='Helvetica', alignment=TA_CENTER)
+    
+    logo_path = uploads_dir / "logo.png"
+    if logo_path.exists():
+        logo_img = Image(str(logo_path), width=0.8*inch, height=0.8*inch)
+        school_info = [
+            [Paragraph(school['nama_sekolah'].upper(), h_style)],
+            [Paragraph(school['alamat'], a_style)],
+            [Paragraph(f"Telp: {school['no_telp']}", a_style)]
+        ]
+        info_table = Table(school_info, colWidths=[5*inch])
+        header_table = Table([[logo_img, info_table]], colWidths=[1*inch, 5.5*inch])
+        header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        elements.append(header_table)
+    else:
+        elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
+        elements.append(Paragraph(school['alamat'], a_style))
+    
+    elements.append(Spacer(1, 0.1*inch))
+    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
     elements.append(Paragraph(f"LAPORAN PEMBAYARAN ANGKATAN {batch}", title_style))
     
     data = [['Kelas', 'Siswa', 'Tagihan', 'Dibayar', 'Tunggakan']]
@@ -1419,6 +1622,77 @@ async def get_student_payments(student_id: str):
             payment["tagihan"] = {"bulan": bill["bulan"], "tahun": bill["tahun"]}
     
     return payments
+
+# Mount static files for uploads
+uploads_dir = ROOT_DIR / 'uploads'
+profiles_dir = uploads_dir / 'profiles'
+profiles_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+
+@api_router.get("/profile/me")
+async def get_my_profile(current_user: Annotated[dict, Depends(get_current_user)]):
+    role = current_user.get("role")
+    user_id = current_user.get("user_id")
+    
+    if role == "siswa":
+        profile = await db.students.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    else:
+        profile = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+        
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
+
+@api_router.post("/profile/upload-photo")
+async def upload_profile_photo(file: UploadFile = File(...), current_user: Annotated[dict, Depends(get_current_user)] = None):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
+    allowed_types = ["image/jpeg", "image/png", "image/jpg"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only JPG and PNG are allowed")
+        
+    ext = mimetypes.guess_extension(file.content_type) or ".jpg"
+    filename = f"profile_{current_user['user_id']}{ext}"
+    file_path = profiles_dir / filename
+    
+    # Save the file
+    with open(file_path, 'wb') as f:
+        content = await file.read()
+        f.write(content)
+        
+    photo_url = f"/uploads/profiles/{filename}"
+    
+    # Update DB
+    if current_user['role'] == "siswa":
+        await db.students.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url}})
+    else:
+        await db.users.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url}})
+        
+    return {"message": "Photo updated", "url": photo_url}
+
+@api_router.put("/profile/change-password")
+async def change_my_password(request: ChangePasswordRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    role = current_user.get("role")
+    user_id = current_user.get("user_id")
+    
+    if role == "siswa":
+        user = await db.students.find_one({"id": user_id})
+        collection = db.students
+    else:
+        user = await db.users.find_one({"id": user_id})
+        collection = db.users
+        
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if not verify_password(request.old_password, user['password']):
+        raise HTTPException(status_code=400, detail="Password lama salah")
+        
+    hashed_password = hash_password(request.new_password)
+    await collection.update_one({"id": user_id}, {"$set": {"password": hashed_password}})
+    
+    return {"message": "Password berhasil diubah"}
 
 # Include the router in the main app
 app.include_router(api_router)

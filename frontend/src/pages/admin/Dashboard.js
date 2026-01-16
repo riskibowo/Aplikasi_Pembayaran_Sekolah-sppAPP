@@ -3,12 +3,34 @@ import Layout from '../../components/Layout';
 import { API } from '../../App';
 import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, DollarSign, AlertCircle, TrendingUp } from 'lucide-react';
+import { Users, DollarSign, AlertCircle, TrendingUp, Info, Search } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
 
 const AdminDashboard = () => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [arrearsDetail, setArrearsDetail] = useState([]);
+  const [showArrears, setShowArrears] = useState(false);
+  const [loadingArrears, setLoadingArrears] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     fetchStats();
@@ -24,6 +46,25 @@ const AdminDashboard = () => {
       setLoading(false);
     }
   };
+
+  const fetchArrears = async () => {
+    setLoadingArrears(true);
+    try {
+      const response = await axios.get(`${API}/dashboard/arrears-detail`);
+      setArrearsDetail(response.data);
+      setShowArrears(true);
+    } catch (error) {
+      toast.error('Gagal memuat detail tunggakan');
+    } finally {
+      setLoadingArrears(false);
+    }
+  };
+
+  const filteredArrears = arrearsDetail.filter(s =>
+    s.nama.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    s.nis.includes(searchTerm) ||
+    s.kelas.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   if (loading) {
     return (
@@ -81,12 +122,96 @@ const AdminDashboard = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-gray-900">{card.value}</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-2xl font-bold text-gray-900">{card.value}</div>
+                    {card.title === 'Siswa Menunggak' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50 p-0 h-auto font-medium text-xs flex items-center gap-1"
+                        onClick={fetchArrears}
+                        disabled={loadingArrears}
+                      >
+                        {loadingArrears ? '...' : (
+                          <>
+                            <Info className="w-3.5 h-3.5" />
+                            Detail
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             );
           })}
         </div>
+
+        {/* Modal Detail Tunggakan */}
+        <Dialog open={showArrears} onOpenChange={setShowArrears}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-bold text-blue-900">Detail Siswa Menunggak</DialogTitle>
+              <DialogDescription>
+                Daftar siswa yang masih memiliki tagihan SPP yang belum dibayar.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="relative mt-2">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Input
+                placeholder="Cari nama, NIS, atau kelas..."
+                className="pl-10"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+
+            <div className="mt-4 border rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader className="bg-gray-50">
+                  <TableRow>
+                    <TableHead>SISWA</TableHead>
+                    <TableHead>KELAS</TableHead>
+                    <TableHead>JML BULAN</TableHead>
+                    <TableHead className="text-right">TOTAL TUNGGAKAN</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredArrears.length > 0 ? (
+                    filteredArrears.map((s) => (
+                      <TableRow key={s.id}>
+                        <TableCell>
+                          <div className="font-medium text-gray-900">{s.nama}</div>
+                          <div className="text-xs text-gray-500">NIS: {s.nis}</div>
+                        </TableCell>
+                        <TableCell>{s.kelas}</TableCell>
+                        <TableCell>
+                          <span className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-semibold">
+                            {s.bulan_count} Bulan
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right font-bold text-red-600">
+                          Rp {s.total_tunggakan.toLocaleString('id-ID')}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-gray-500">
+                        Tidak ada data yang ditemukan.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="mt-4 text-xs text-gray-500 italic">
+              * Data di atas mencakup seluruh tagihan dengan status 'BELUM DIBAYAR'.
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Chart */}
         <Card className="border-0 shadow-lg">

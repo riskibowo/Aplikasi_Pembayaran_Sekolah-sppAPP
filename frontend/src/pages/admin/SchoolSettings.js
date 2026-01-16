@@ -32,7 +32,7 @@ const SchoolSettings = () => {
     const handleSave = async (e) => {
         e.preventDefault();
         try {
-            await axios.put(`${API}/master/school-profile`, profile, {
+            await axios.put(`${API}/admin/school-profile`, profile, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             toast.success('Pengaturan sekolah berhasil disimpan');

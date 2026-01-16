@@ -16,15 +16,15 @@ import AdminBills from "./pages/admin/Bills";
 import AdminReports from "./pages/admin/Reports";
 // 3. Impor halaman baru yang kita buat
 import AdminClasses from "./pages/admin/Classes";
+import SchoolSettings from "./pages/admin/SchoolSettings";
 import KepsekDashboard from "./pages/kepsek/Dashboard";
 import KepsekReports from "./pages/kepsek/Reports";
 import StudentDashboard from "./pages/student/Dashboard";
-import StudentProfile from "./pages/student/Profile";
+import UserProfile from "./pages/student/Profile";
 import StudentBills from "./pages/student/Bills";
 import StudentPayments from "./pages/student/Payments";
 import MasterDashboard from "./pages/master/Dashboard";
 import StaffManagement from "./pages/master/StaffManagement";
-import SchoolSettings from "./pages/master/SchoolSettings";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -102,14 +102,20 @@ function App() {
 
             {/* Student Routes */}
             <Route path="/siswa/dashboard" element={user?.role === "siswa" ? <StudentDashboard /> : <Navigate to="/" />} />
-            <Route path="/siswa/profile" element={user?.role === "siswa" ? <StudentProfile /> : <Navigate to="/" />} />
+            {/* Shared Profile Route for all roles */}
+            <Route path="/admin/profile" element={user?.role === "admin" ? <UserProfile /> : <Navigate to="/" />} />
+            <Route path="/kepsek/profile" element={user?.role === "kepsek" ? <UserProfile /> : <Navigate to="/" />} />
+            <Route path="/master/profile" element={user?.role === "master" ? <UserProfile /> : <Navigate to="/" />} />
+            <Route path="/siswa/profile" element={user?.role === "siswa" ? <UserProfile /> : <Navigate to="/" />} />
             <Route path="/siswa/bills" element={user?.role === "siswa" ? <StudentBills /> : <Navigate to="/" />} />
             <Route path="/siswa/payments" element={user?.role === "siswa" ? <StudentPayments /> : <Navigate to="/" />} />
 
             {/* Master Routes */}
             <Route path="/master/dashboard" element={user?.role === "master" ? <MasterDashboard /> : <Navigate to="/" />} />
             <Route path="/master/staff" element={user?.role === "master" ? <StaffManagement /> : <Navigate to="/" />} />
-            <Route path="/master/settings" element={user?.role === "master" ? <SchoolSettings /> : <Navigate to="/" />} />
+
+            {/* Admin Settings Route (Now separated from master section in route list, but logically admin) */}
+            <Route path="/admin/settings" element={user?.role === "admin" ? <SchoolSettings /> : <Navigate to="/" />} />
           </Routes>
         </BrowserRouter>
         {/* <Toaster> yang duplikat dihapus dari sini */}

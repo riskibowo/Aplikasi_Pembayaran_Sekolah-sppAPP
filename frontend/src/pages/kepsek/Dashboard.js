@@ -3,19 +3,59 @@ import Layout from '../../components/Layout';
 import { API } from '../../App';
 import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { DollarSign, TrendingUp, Users, AlertCircle, Calendar } from 'lucide-react';
+import { DollarSign, TrendingUp, Users, AlertCircle, Calendar, Info, Search } from 'lucide-react';
 import {
   BarChart, Bar,
   LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const KepsekDashboard = () => {
   const [stats, setStats] = useState(null);
   const [monthlyStats, setMonthlyStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [arrearsDetail, setArrearsDetail] = useState([]);
+  const [showArrears, setShowArrears] = useState(false);
+  const [loadingArrears, setLoadingArrears] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const fetchArrears = async () => {
+    setLoadingArrears(true);
+    try {
+      const response = await axios.get(`${API}/dashboard/arrears-detail`);
+      setArrearsDetail(response.data);
+      setShowArrears(true);
+    } catch (error) {
+      toast.error('Gagal memuat detail tunggakan');
+    } finally {
+      setLoadingArrears(false);
+    }
+  };
+
+  const filteredArrears = arrearsDetail.filter(s =>
+    s.nama.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    s.nis.includes(searchTerm) ||
+    s.kelas.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   useEffect(() => {
     fetchData();
@@ -114,11 +154,104 @@ const KepsekDashboard = () => {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
+                  {stat.title === 'Siswa Menunggak' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 p-0 h-auto font-medium text-xs flex items-center gap-1"
+                      onClick={fetchArrears}
+                      disabled={loadingArrears}
+                    >
+                      {loadingArrears ? '...' : (
+                        <>
+                          <Info className="w-3.5 h-3.5" />
+                          Detail
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
               </CardContent>
             </Card>
           ))}
         </div>
+
+        {/* Modal Detail Tunggakan */}
+        <Dialog open={showArrears} onOpenChange={setShowArrears}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-bold text-blue-900">Detail Tunggakan SPP</DialogTitle>
+              <DialogDescription>
+                Daftar siswa yang tercatat belum melunasi tagihan SPP.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="relative mt-2">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Input
+                placeholder="Cari nama, NIS, atau kelas..."
+                className="pl-10 text-sm"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+
+            <div className="mt-4 border rounded-xl overflow-hidden shadow-sm">
+              <Table>
+                <TableHeader className="bg-blue-50/50">
+                  <TableRow>
+                    <TableHead className="font-bold text-blue-900">SISWA</TableHead>
+                    <TableHead className="font-bold text-blue-900">KELAS</TableHead>
+                    <TableHead className="font-bold text-blue-900 text-center">TUNGGAKAN</TableHead>
+                    <TableHead className="text-right font-bold text-blue-900">TOTAL NILAI</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredArrears.length > 0 ? (
+                    filteredArrears.map((s) => (
+                      <TableRow key={s.id} className="hover:bg-gray-50/50 transition-colors">
+                        <TableCell>
+                          <div className="font-semibold text-gray-900">{s.nama}</div>
+                          <div className="text-[10px] text-gray-500 font-mono tracking-wider">NIS: {s.nis}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm font-medium text-gray-700">{s.kelas}</div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className="px-2 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-full text-[10px] font-bold">
+                            {s.bulan_count} BULAN
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right font-bold text-red-600">
+                          Rp {s.total_tunggakan.toLocaleString('id-ID')}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-12">
+                        <div className="flex flex-col items-center gap-2 text-gray-400">
+                          <Search className="w-8 h-8 opacity-20" />
+                          <p className="text-sm">Data tidak ditemukan</p>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="mt-4 p-3 bg-blue-50/50 rounded-lg border border-blue-100 flex gap-2 items-start">
+              <Info className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+              <p className="text-[11px] text-blue-700 leading-relaxed">
+                Data ini menyajikan daftar siswa yang memiliki tagihan dengan status <b>BEUM LUNAS</b>.
+                Gunakan fitur pencarian untuk menemukan data siswa secara spesifik per kelas atau NIS.
+              </p>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Monthly Trend */}
