@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Annotated
 import uuid
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from io import BytesIO
@@ -149,6 +149,16 @@ class SchoolProfile(BaseModel):
     bank_rekening: str = "0000-01-000000-00-0"
     bank_atas_nama: str = "SMK MEKAR MURNI"
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class LoginLog(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    username: str
+    ip_address: str
+    user_agent: str
+    status: str # "success" or "failed"
+    role: Optional[str] = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    is_suspicious: bool = False
 
 # Request/Response Models
 class LoginRequest(BaseModel):
@@ -485,23 +495,66 @@ async def root():
 
 # Auth Routes
 @api_router.post("/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
-    # Try to find in users collection (admin/kepsek)
+async def login(request: LoginRequest, fastapi_request: Request):
+    ip_address = fastapi_request.client.host
+    user_agent = fastapi_request.headers.get("user-agent", "unknown")
+    
+    # Check for suspicious activity (e.g., 5 failed attempts from same IP in last 5 mins)
+    five_mins_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    recent_failures = await db.login_logs.count_documents({
+        "ip_address": ip_address,
+        "status": "failed",
+        "timestamp": {"$gte": five_mins_ago}
+    })
+    
+    is_suspicious = recent_failures >= 5
+
+    def log_attempt(status, role=None):
+        log = LoginLog(
+            username=request.username,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            status=status,
+            role=role,
+            is_suspicious=is_suspicious
+        )
+        doc = log.model_dump()
+        doc['timestamp'] = doc['timestamp'].isoformat()
+        return db.login_logs.insert_one(doc)
+
+    # Try to find in users collection (admin/kepsek/master)
     user = await db.users.find_one({"username": request.username}, {"_id": 0})
     if user:
+        if not user.get("is_active", True):
+            await log_attempt("failed (banned)", user['role'])
+            raise HTTPException(status_code=403, detail="Akun Anda telah dinonaktifkan (Banned)")
+            
         if verify_password(request.password, user['password']):
+            await log_attempt("success", user['role'])
             token = create_token({"user_id": user['id'], "role": user['role']})
             user_data = {"id": user['id'], "username": user['username'], "nama": user['nama'], "role": user['role']}
             return {"token": token, "user": user_data}
+        else:
+            await log_attempt("failed", user['role'])
     
     # Try to find in students collection
     student = await db.students.find_one({"username": request.username}, {"_id": 0})
     if student:
+        if not student.get("is_active", True):
+            await log_attempt("failed (banned)", "siswa")
+            raise HTTPException(status_code=403, detail="Akun Anda telah dinonaktifkan (Banned)")
+
         if verify_password(request.password, student['password']):
+            await log_attempt("success", "siswa")
             token = create_token({"user_id": student['id'], "role": "siswa"})
             user_data = {"id": student['id'], "username": student['username'], "nama": student['nama'], "role": "siswa", "nis": student['nis']}
             return {"token": token, "user": user_data}
+        else:
+            await log_attempt("failed", "siswa")
     
+    if not user and not student:
+        await log_attempt("failed (unknown user)")
+
     raise HTTPException(status_code=401, detail="Username atau password salah")
 
 @api_router.get("/auth/me")
@@ -562,6 +615,44 @@ async def delete_staff(staff_id: str, current_user: Annotated[dict, Depends(get_
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Staf tidak ditemukan")
     return {"message": "Akun staf berhasil dihapus"}
+
+# Master Security Features
+@api_router.get("/master/login-logs")
+async def get_login_logs(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    logs = await db.login_logs.find({}, {"_id": 0}).sort("timestamp", -1).limit(500).to_list(500)
+    return logs
+
+@api_router.post("/master/users/{user_id}/ban")
+async def ban_user(user_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Search in users
+    result = await db.users.update_one({"id": user_id}, {"$set": {"is_active": False}})
+    if result.matched_count == 0:
+        # Search in students
+        result = await db.students.update_one({"id": user_id}, {"$set": {"is_active": False}})
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+            
+    return {"message": "User berhasil dibanned"}
+
+@api_router.post("/master/users/{user_id}/unban")
+async def unban_user(user_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Search in users
+    result = await db.users.update_one({"id": user_id}, {"$set": {"is_active": True}})
+    if result.matched_count == 0:
+        # Search in students
+        result = await db.students.update_one({"id": user_id}, {"$set": {"is_active": True}})
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+            
+    return {"message": "User berhasil diaktifkan kembali"}
 
 # Admin Master - School Profile
 @api_router.get("/school-profile")

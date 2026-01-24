@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Edit, Trash2, ShieldCheck, UserCog } from 'lucide-react';
+import { Plus, Edit, Trash2, ShieldCheck, UserCog, Ban, CheckCircle } from 'lucide-react';
 
 const StaffManagement = () => {
     const [staff, setStaff] = useState([]);
@@ -72,6 +72,34 @@ const StaffManagement = () => {
             fetchStaff();
         } catch (error) {
             toast.error('Gagal menghapus staf');
+        }
+    };
+
+    const handleBan = async (staffId) => {
+        if (!window.confirm('Yakin ingin membanned akun staf ini?')) return;
+
+        try {
+            await axios.post(`${API}/master/users/${staffId}/ban`, {}, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            toast.success('Staf berhasil dibanned');
+            fetchStaff();
+        } catch (error) {
+            toast.error('Gagal membanned staf');
+        }
+    };
+
+    const handleUnban = async (staffId) => {
+        if (!window.confirm('Aktifkan kembali akun staf ini?')) return;
+
+        try {
+            await axios.post(`${API}/master/users/${staffId}/unban`, {}, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            toast.success('Staf berhasil diaktifkan kembali');
+            fetchStaff();
+        } catch (error) {
+            toast.error('Gagal mengaktifkan staf');
         }
     };
 
@@ -138,6 +166,7 @@ const StaffManagement = () => {
                                         <TableHead>Nama</TableHead>
                                         <TableHead>Username</TableHead>
                                         <TableHead>Role</TableHead>
+                                        <TableHead>Status</TableHead>
                                         <TableHead className="text-right">Aksi</TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -152,11 +181,26 @@ const StaffManagement = () => {
                                                     {s.role === 'admin' ? 'ADMIN TU' : 'KEPALA SEKOLAH'}
                                                 </span>
                                             </TableCell>
+                                            <TableCell>
+                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${s.is_active !== false ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                                    }`}>
+                                                    {s.is_active !== false ? 'AKTIF' : 'BANNED'}
+                                                </span>
+                                            </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex items-center justify-end space-x-2">
-                                                    <Button variant="ghost" size="sm" onClick={() => handleEdit(s)} className="text-blue-600">
+                                                    <Button variant="ghost" size="sm" onClick={() => handleEdit(s)} title="Edit Profil" className="text-blue-600">
                                                         <Edit className="w-4 h-4" />
                                                     </Button>
+                                                    {s.is_active !== false ? (
+                                                        <Button variant="ghost" size="sm" onClick={() => handleBan(s.id)} title="Ban User" className="text-orange-600">
+                                                            <Ban className="w-4 h-4" />
+                                                        </Button>
+                                                    ) : (
+                                                        <Button variant="ghost" size="sm" onClick={() => handleUnban(s.id)} title="Unban User" className="text-green-600">
+                                                            <CheckCircle className="w-4 h-4" />
+                                                        </Button>
+                                                    )}
                                                     <Button variant="ghost" size="sm" onClick={() => handleDelete(s.id)} className="text-red-600">
                                                         <Trash2 className="w-4 h-4" />
                                                     </Button>

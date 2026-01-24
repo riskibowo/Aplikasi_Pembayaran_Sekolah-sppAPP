@@ -25,6 +25,7 @@ import StudentBills from "./pages/student/Bills";
 import StudentPayments from "./pages/student/Payments";
 import MasterDashboard from "./pages/master/Dashboard";
 import StaffManagement from "./pages/master/StaffManagement";
+import LoginTraffic from "./pages/master/LoginTraffic";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -113,6 +114,7 @@ function App() {
             {/* Master Routes */}
             <Route path="/master/dashboard" element={user?.role === "master" ? <MasterDashboard /> : <Navigate to="/" />} />
             <Route path="/master/staff" element={user?.role === "master" ? <StaffManagement /> : <Navigate to="/" />} />
+            <Route path="/master/login-traffic" element={user?.role === "master" ? <LoginTraffic /> : <Navigate to="/" />} />
 
             {/* Admin Settings Route (Now separated from master section in route list, but logically admin) */}
             <Route path="/admin/settings" element={user?.role === "admin" ? <SchoolSettings /> : <Navigate to="/" />} />

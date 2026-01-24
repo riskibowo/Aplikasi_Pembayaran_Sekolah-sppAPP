@@ -2,7 +2,7 @@ import React, { useContext, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AuthContext, API } from '../App';
 import { Button } from '@/components/ui/button';
-import { School, LayoutDashboard, Users, FileText, LogOut, User, CreditCard, History, GraduationCap, Settings, ShieldCheck } from 'lucide-react';
+import { School, LayoutDashboard, Users, FileText, LogOut, User, CreditCard, History, GraduationCap, Settings, ShieldCheck, Activity } from 'lucide-react';
 import axios from 'axios';
 
 const Layout = ({ children }) => {
@@ -40,6 +40,7 @@ const Layout = ({ children }) => {
         { path: '/master/dashboard', label: 'Dashboard Master', icon: LayoutDashboard },
         { path: '/master/profile', label: 'Profil Saya', icon: User },
         { path: '/master/staff', label: 'Kelola Staf', icon: ShieldCheck },
+        { path: '/master/login-traffic', label: 'Monitoring Login', icon: Activity },
       ];
     } else if (user.role === 'kepsek') {
       return [
