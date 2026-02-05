@@ -85,6 +85,22 @@ async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, 
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+async def log_activity(username: str, role: str, activity_type: str, description: str, ip_address: str = None, user_id: str = None):
+    log = ActivityLog(
+        username=username,
+        user_id=user_id,
+        role=role,
+        activity_type=activity_type,
+        description=description,
+        ip_address=ip_address
+    )
+    doc = log.model_dump()
+    doc['timestamp'] = doc['timestamp'].isoformat()
+    await db.activity_logs.insert_one(doc)
+    
+    # Also log to console for visibility
+    print(f"[ACTIVITY] {datetime.now().strftime('%H:%M:%S')} - {role.upper()}:{username} - {activity_type}: {description}")
+
 # Models
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -153,12 +169,23 @@ class SchoolProfile(BaseModel):
 class LoginLog(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     username: str
+    user_id: Optional[str] = None
     ip_address: str
     user_agent: str
     status: str # "success" or "failed"
     role: Optional[str] = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_suspicious: bool = False
+
+class ActivityLog(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    username: str
+    user_id: Optional[str] = None
+    role: str
+    activity_type: str # "payment", "student_mgmt", "class_mgmt", "staff_mgmt", "security"
+    description: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    ip_address: Optional[str] = None
 
 # Request/Response Models
 class LoginRequest(BaseModel):
@@ -508,10 +535,12 @@ async def login(request: LoginRequest, fastapi_request: Request):
     })
     
     is_suspicious = recent_failures >= 5
+    should_auto_ban = recent_failures >= 10
 
-    def log_attempt(status, role=None):
+    def log_attempt(status, role=None, user_id=None):
         log = LoginLog(
             username=request.username,
+            user_id=user_id,
             ip_address=ip_address,
             user_agent=user_agent,
             status=status,
@@ -522,35 +551,52 @@ async def login(request: LoginRequest, fastapi_request: Request):
         doc['timestamp'] = doc['timestamp'].isoformat()
         return db.login_logs.insert_one(doc)
 
+    async def log_and_raise_banned(u_role, u_id):
+        await log_attempt("failed (banned)", u_role, u_id)
+        await log_activity(request.username, u_role, "security", "Percobaan login pada akun yang dibanned", ip_address, u_id)
+        raise HTTPException(status_code=403, detail="Akun Anda telah dinonaktifkan (Banned)")
+
     # Try to find in users collection (admin/kepsek/master)
     user = await db.users.find_one({"username": request.username}, {"_id": 0})
     if user:
+        if should_auto_ban and user.get("is_active", True):
+            await db.users.update_one({"id": user['id']}, {"$set": {"is_active": False}})
+            await log_activity(request.username, user['role'], "security", f"AKUN DIBANNED OTOMATIS (Terdeteksi serangan spam login dari IP {ip_address})", ip_address, user['id'])
+            user['is_active'] = False
+
         if not user.get("is_active", True):
-            await log_attempt("failed (banned)", user['role'])
-            raise HTTPException(status_code=403, detail="Akun Anda telah dinonaktifkan (Banned)")
+            await log_and_raise_banned(user['role'], user['id'])
             
         if verify_password(request.password, user['password']):
-            await log_attempt("success", user['role'])
-            token = create_token({"user_id": user['id'], "role": user['role']})
+            await log_attempt("success", user['role'], user['id'])
+            await log_activity(user['username'], user['role'], "security", f"Berhasil login ke sistem", ip_address, user['id'])
+            token = create_token({"user_id": user['id'], "role": user['role'], "username": user['username']})
             user_data = {"id": user['id'], "username": user['username'], "nama": user['nama'], "role": user['role']}
             return {"token": token, "user": user_data}
         else:
-            await log_attempt("failed", user['role'])
+            await log_attempt("failed", user['role'], user['id'])
+            await log_activity(request.username, user['role'], "security", f"Gagal login (password salah)", ip_address, user['id'])
     
     # Try to find in students collection
     student = await db.students.find_one({"username": request.username}, {"_id": 0})
     if student:
+        if should_auto_ban and student.get("is_active", True):
+            await db.students.update_one({"id": student['id']}, {"$set": {"is_active": False}})
+            await log_activity(request.username, "siswa", "security", f"AKUN SISWA DIBANNED OTOMATIS (Terdeteksi serangan spam login dari IP {ip_address})", ip_address, student['id'])
+            student['is_active'] = False
+
         if not student.get("is_active", True):
-            await log_attempt("failed (banned)", "siswa")
-            raise HTTPException(status_code=403, detail="Akun Anda telah dinonaktifkan (Banned)")
+            await log_and_raise_banned("siswa", student['id'])
 
         if verify_password(request.password, student['password']):
-            await log_attempt("success", "siswa")
-            token = create_token({"user_id": student['id'], "role": "siswa"})
+            await log_attempt("success", "siswa", student['id'])
+            await log_activity(student['username'], "siswa", "security", f"Berhasil login ke sistem", ip_address, student['id'])
+            token = create_token({"user_id": student['id'], "role": "siswa", "username": student['username']})
             user_data = {"id": student['id'], "username": student['username'], "nama": student['nama'], "role": "siswa", "nis": student['nis']}
             return {"token": token, "user": user_data}
         else:
-            await log_attempt("failed", "siswa")
+            await log_attempt("failed", "siswa", student['id'])
+            await log_activity(request.username, "siswa", "security", f"Gagal login (password salah)", ip_address, student['id'])
     
     if not user and not student:
         await log_attempt("failed (unknown user)")
@@ -622,6 +668,33 @@ async def get_login_logs(current_user: Annotated[dict, Depends(get_current_user)
     if current_user.get("role") != "master":
         raise HTTPException(status_code=403, detail="Not authorized")
     logs = await db.login_logs.find({}, {"_id": 0}).sort("timestamp", -1).limit(500).to_list(500)
+    
+    # Enrich with current active status
+    for log in logs:
+        if log.get("user_id"):
+            u = await db.users.find_one({"id": log["user_id"]}, {"is_active": 1})
+            if not u:
+                u = await db.students.find_one({"id": log["user_id"]}, {"is_active": 1})
+            log["is_user_active"] = u.get("is_active", True) if u else True
+            
+    return logs
+
+@api_router.get("/master/activity-logs")
+async def get_activity_logs(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Get last 100 activities
+    logs = await db.activity_logs.find({}, {"_id": 0}).sort("timestamp", -1).limit(100).to_list(100)
+    
+    # Enrich with current active status
+    for log in logs:
+        if log.get("user_id"):
+            u = await db.users.find_one({"id": log["user_id"]}, {"is_active": 1})
+            if not u:
+                u = await db.students.find_one({"id": log["user_id"]}, {"is_active": 1})
+            log["is_user_active"] = u.get("is_active", True) if u else True
+            
     return logs
 
 @api_router.post("/master/users/{user_id}/ban")
@@ -653,6 +726,26 @@ async def unban_user(user_id: str, current_user: Annotated[dict, Depends(get_cur
             raise HTTPException(status_code=404, detail="User tidak ditemukan")
             
     return {"message": "User berhasil diaktifkan kembali"}
+
+@api_router.delete("/master/login-logs")
+async def clear_login_logs(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    await db.login_logs.delete_many({})
+    username = current_user.get("username", "master")
+    await log_activity(username, "master", "security", "Membersihkan seluruh histori login", user_id=current_user.get("user_id"))
+    return {"message": "Histori login berhasil dibersihkan"}
+
+@api_router.delete("/master/activity-logs")
+async def clear_activity_logs(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    await db.activity_logs.delete_many({})
+    username = current_user.get("username", "master")
+    await log_activity(username, "master", "security", "Membersihkan seluruh log aktivitas", user_id=current_user.get("user_id"))
+    return {"message": "Log aktivitas berhasil dibersihkan"}
 
 # Admin Master - School Profile
 @api_router.get("/school-profile")
@@ -695,6 +788,7 @@ async def create_student(student: StudentCreate):
     doc = new_student.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
     await db.students.insert_one(doc)
+    await log_activity("system", "admin", "student_mgmt", f"Menambahkan siswa baru: {student.nama} ({student.nis})")
     return new_student
 
 @api_router.put("/students/{student_id}")
@@ -717,13 +811,16 @@ async def update_student(student_id: str, student: StudentCreate):
         updated_data["password"] = hash_password(student.password)
     
     await db.students.update_one({"id": student_id}, {"$set": updated_data})
+    await log_activity("system", "admin", "student_mgmt", f"Mengupdate data siswa: {exists['nama']}")
     return {"message": "Siswa berhasil diupdate"}
 
 @api_router.delete("/students/{student_id}")
 async def delete_student(student_id: str):
+    exists = await db.students.find_one({"id": student_id})
     result = await db.students.delete_one({"id": student_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Siswa tidak ditemukan")
+    await log_activity("system", "admin", "student_mgmt", f"Menghapus siswa: {exists['nama'] if exists else student_id}")
     return {"message": "Siswa berhasil dihapus"}
 
 # Class Routes
@@ -840,6 +937,11 @@ async def confirm_bill(bill_id: str, confirm: BillConfirm):
         if student:
             logging.info(f"[MOCK WA] Pembayaran SPP {bill['bulan']} {bill['tahun']} sebesar Rp {bill['jumlah']:,.0f} telah DITERIMA. Terima kasih! - SMK MEKAR MURNI. Kirim ke: {student['no_wa']}")
     
+    # Log activity
+    status_text = "mengonfirmasi (Lunas)" if confirm.status == "lunas" else f"mengubah status ke {confirm.status}"
+    student = await db.students.find_one({"id": bill['id_siswa']})
+    await log_activity("system", "admin", "payment", f"Admin {status_text} tagihan siswa: {student['nama'] if student else 'Unknown'}")
+
     return {"message": "Status tagihan berhasil diupdate"}
 
 # Payment Routes
@@ -894,6 +996,9 @@ async def create_payment(payment_data: PaymentCreate):
     doc['tanggal_bayar'] = doc['tanggal_bayar'].isoformat()
     await db.payments.insert_one(doc)
     
+    student = await db.students.find_one({"id": payment.id_siswa})
+    await log_activity(student['username'] if student else "unknown", "siswa", "payment", f"Melakukan pembayaran SPP sebesar Rp {payment.jumlah:,.0f}")
+    
     # Update bill status menjadi "menunggu_konfirmasi"
     await db.bills.update_one(
         {"id": payment_data.id_tagihan},
@@ -903,7 +1008,7 @@ async def create_payment(payment_data: PaymentCreate):
     # JANGAN kirim WA dulu di sini
     # ---------------------------
     
-    return payment
+    return {"message": "Pembayaran berhasil dikirim, menunggu konfirmasi admin", "id": payment.id}
 
 
 # Upload receipt for a payment (student uploads PDF)
@@ -937,6 +1042,9 @@ async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
     # Update payment record
     await db.payments.update_one({"id": payment_id}, {"$set": {"receipt_path": str(file_path), "status": "menunggu_konfirmasi"}})
     await db.bills.update_one({"id": payment['id_tagihan']}, {"$set": {"status": "menunggu_konfirmasi"}})
+    
+    student = await db.students.find_one({"id": payment['id_siswa']})
+    await log_activity(student['username'] if student else "unknown", "siswa", "payment", f"Mengunggah bukti pembayaran untuk tagihan {payment['id_tagihan']}")
 
     return {"message": "Receipt uploaded"}
 
@@ -1694,6 +1802,7 @@ async def change_student_password(student_id: str, request: ChangePasswordReques
         {"id": student_id}, 
         {"$set": {"password": hashed_new_password}}
     )
+    await log_activity(student['username'], "siswa", "profile", "Mengubah password")
     
     return {"message": "Password berhasil diubah"}
 
@@ -1759,6 +1868,8 @@ async def upload_profile_photo(file: UploadFile = File(...), current_user: Annot
         await db.students.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url}})
     else:
         await db.users.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url}})
+    
+    await log_activity(current_user['username'], current_user['role'], "profile", "Mengunggah foto profil")
         
     return {"message": "Photo updated", "url": photo_url}
 
@@ -1782,6 +1893,8 @@ async def change_my_password(request: ChangePasswordRequest, current_user: Annot
         
     hashed_password = hash_password(request.new_password)
     await collection.update_one({"id": user_id}, {"$set": {"password": hashed_password}})
+    
+    await log_activity(current_user['username'], current_user['role'], "profile", "Mengubah password")
     
     return {"message": "Password berhasil diubah"}
 

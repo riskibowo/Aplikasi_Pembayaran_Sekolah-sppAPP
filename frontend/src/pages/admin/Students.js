@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 // Tambahkan import MessageCircle (icon WhatsApp)
-import { Plus, Edit, Trash2, Search, MessageCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, MessageCircle, Ban, ShieldAlert, CheckCircle } from 'lucide-react';
 
 const AdminStudents = () => {
   const [students, setStudents] = useState([]);
@@ -19,6 +19,8 @@ const AdminStudents = () => {
   const [showDialog, setShowDialog] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const { token, user } = React.useContext(require('../../App').AuthContext);
+
   const [currentStudent, setCurrentStudent] = useState({
     id: '',
     nis: '',
@@ -45,6 +47,33 @@ const AdminStudents = () => {
       setLoading(false);
     }
   };
+
+  const handleBan = async (studentId) => {
+    if (!window.confirm('Apakah Anda yakin ingin membanned siswa ini?')) return;
+    try {
+      await axios.post(`${API}/master/users/${studentId}/ban`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Siswa berhasil dibanned');
+      fetchStudents();
+    } catch (error) {
+      toast.error('Gagal membanned siswa (Hanya Master Admin yang bisa)');
+    }
+  };
+
+  const handleUnban = async (studentId) => {
+    try {
+      await axios.post(`${API}/master/users/${studentId}/unban`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Siswa berhasil diaktifkan kembali');
+      fetchStudents();
+    } catch (error) {
+      toast.error('Gagal mengaktifkan siswa (Hanya Master Admin yang bisa)');
+    }
+  };
+
+
 
   const fetchClasses = async () => {
     try {
@@ -244,6 +273,7 @@ const AdminStudents = () => {
                     <TableHead>Angkatan</TableHead>
                     <TableHead>No. WhatsApp</TableHead>
                     <TableHead>Username</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead className="text-right">Aksi</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -267,8 +297,38 @@ const AdminStudents = () => {
                         <TableCell>{student.angkatan}</TableCell>
                         <TableCell>{student.no_wa}</TableCell>
                         <TableCell>{student.username}</TableCell>
+                        <TableCell>
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${student.is_active !== false ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {student.is_active !== false ? 'AKTIF' : 'BANNED'}
+                          </span>
+                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end space-x-2">
+                            {/* Ban/Unban Button (Master Only) */}
+                            {user?.role === 'master' && (
+                              student.is_active !== false ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleBan(student.id)}
+                                  className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                  title="Ban Siswa"
+                                >
+                                  <ShieldAlert className="w-4 h-4" />
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleUnban(student.id)}
+                                  className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                  title="Unban Siswa"
+                                >
+                                  <CheckCircle className="w-4 h-4" />
+                                </Button>
+                              )
+                            )}
+
                             {/* TOMBOL BARU: Ingatkan Via WhatsApp */}
                             <Button
                               variant="ghost"
