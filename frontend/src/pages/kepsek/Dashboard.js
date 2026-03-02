@@ -31,6 +31,7 @@ import { Input } from '@/components/ui/input';
 const KepsekDashboard = () => {
   const [stats, setStats] = useState(null);
   const [monthlyStats, setMonthlyStats] = useState(null);
+  const [onlineCount, setOnlineCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [arrearsDetail, setArrearsDetail] = useState([]);
@@ -59,7 +60,19 @@ const KepsekDashboard = () => {
 
   useEffect(() => {
     fetchData();
+    fetchOnlineCount();
+    const interval = setInterval(fetchOnlineCount, 10000);
+    return () => clearInterval(interval);
   }, []);
+
+  const fetchOnlineCount = async () => {
+    try {
+      const response = await axios.get(`${API}/auth/online-users`);
+      setOnlineCount(response.data.length);
+    } catch (error) {
+      console.error('Error fetching online count:', error);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -124,7 +137,15 @@ const KepsekDashboard = () => {
       icon: AlertCircle,
       color: 'from-red-500 to-red-600',
     },
+    {
+      title: 'User Online',
+      value: onlineCount,
+      icon: TrendingUp,
+      color: 'from-indigo-500 to-indigo-600',
+    },
   ];
+
+  const gridCols = `grid grid-cols-1 md:grid-cols-${quickStats.length} gap-6`;
 
   return (
     <Layout>
@@ -143,7 +164,7 @@ const KepsekDashboard = () => {
         </div>
 
         {/* Quick Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className={gridCols}>
           {quickStats.map((stat, idx) => (
             <Card key={idx} className="border-0 shadow-lg hover:shadow-xl transition-shadow overflow-hidden">
               <div className={`h-1.5 bg-gradient-to-r ${stat.color}`}></div>

@@ -19,6 +19,7 @@ const AdminReports = () => {
   const [selectedMonth, setSelectedMonth] = useState('Januari');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedStudent, setSelectedStudent] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('all');
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedBatch, setSelectedBatch] = useState('');
 
@@ -65,10 +66,15 @@ const AdminReports = () => {
 
       if (reportType === 'monthly') {
         url = `${API}/reports/monthly`;
-        params = { bulan: selectedMonth, tahun: selectedYear };
+        params = { bulan: selectedMonth, tahun: selectedYear, status: selectedStatus !== 'all' ? selectedStatus : undefined };
       } else if (reportType === 'student') {
         if (!selectedStudent) throw new Error('Pilih siswa terlebih dahulu');
         url = `${API}/reports/student/${selectedStudent}`;
+        params = { status: selectedStatus !== 'all' ? selectedStatus : undefined };
+      } else if (reportType === 'arrears') {
+        url = `${API}/reports/arrears`;
+      } else if (reportType === 'class-recap') {
+        url = `${API}/reports/class-recap`;
       } else if (reportType === 'class') {
         if (!selectedClass) throw new Error('Pilih kelas terlebih dahulu');
         url = `${API}/reports/class/${selectedClass}`;
@@ -98,11 +104,18 @@ const AdminReports = () => {
 
       if (reportType === 'monthly') {
         url = `${API}/reports/export-${format}`;
-        params = { bulan: selectedMonth, tahun: selectedYear };
-        filename = `laporan_${selectedMonth}_${selectedYear}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+        params = { bulan: selectedMonth, tahun: selectedYear, status: selectedStatus !== 'all' ? selectedStatus : undefined };
+        filename = `laporan_bulanan_${selectedMonth}_${selectedYear}${selectedStatus !== 'all' ? '_' + selectedStatus : ''}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
       } else if (reportType === 'student') {
         url = `${API}/reports/student/${selectedStudent}/export-${format}`;
-        filename = `laporan_siswa_${selectedStudent}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+        params = { status: selectedStatus !== 'all' ? selectedStatus : undefined };
+        filename = `laporan_siswa_${selectedStudent}${selectedStatus !== 'all' ? '_' + selectedStatus : ''}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+      } else if (reportType === 'arrears') {
+        url = `${API}/reports/arrears/export-${format}`;
+        filename = `laporan_tunggakan.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+      } else if (reportType === 'class-recap') {
+        url = `${API}/reports/class-recap/export-${format}`;
+        filename = `recap_pembayaran_kelas.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
       } else if (reportType === 'class') {
         url = `${API}/reports/class/${selectedClass}/export-${format}`;
         filename = `laporan_kelas_${selectedClass}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
@@ -139,25 +152,28 @@ const AdminReports = () => {
         </div>
 
         <Tabs value={reportType} onValueChange={(val) => { setReportType(val); setReportData(null); }} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 bg-blue-50">
+          <TabsList className="grid w-full grid-cols-5 bg-blue-50">
             <TabsTrigger value="monthly" className="data-[state=active]:bg-blue-900 data-[state=active]:text-white">
               <Calendar className="w-4 h-4 mr-2" /> Bulanan
+            </TabsTrigger>
+            <TabsTrigger value="arrears" className="data-[state=active]:bg-blue-900 data-[state=active]:text-white">
+              <TrendingUp className="w-4 h-4 mr-2" /> Tunggakan
+            </TabsTrigger>
+            <TabsTrigger value="class-recap" className="data-[state=active]:bg-blue-900 data-[state=active]:text-white">
+              <Users className="w-4 h-4 mr-2" /> Rekap Kelas
             </TabsTrigger>
             <TabsTrigger value="student" className="data-[state=active]:bg-blue-900 data-[state=active]:text-white">
               <User className="w-4 h-4 mr-2" /> Per Siswa
             </TabsTrigger>
-            <TabsTrigger value="class" className="data-[state=active]:bg-blue-900 data-[state=active]:text-white">
-              <Users className="w-4 h-4 mr-2" /> Per Kelas
-            </TabsTrigger>
             <TabsTrigger value="batch" className="data-[state=active]:bg-blue-900 data-[state=active]:text-white">
-              <Layers className="w-4 h-4 mr-2" /> Per Angkatan
+              <Layers className="w-4 h-4 mr-2" /> Angkatan
             </TabsTrigger>
           </TabsList>
 
           <Card className="mt-6 border-0 shadow-lg">
             <CardHeader>
               <CardTitle className="text-lg font-semibold text-blue-900">
-                Filter Laporan {reportType === 'monthly' ? 'Bulanan' : reportType === 'student' ? 'Siswa' : reportType === 'class' ? 'Kelas' : 'Angkatan'}
+                Filter Laporan {reportType === 'monthly' ? 'Bulanan' : reportType === 'student' ? 'Siswa' : reportType === 'arrears' ? 'Tunggakan' : reportType === 'class-recap' ? 'Rekap Kelas' : 'Angkatan'}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -178,18 +194,42 @@ const AdminReports = () => {
                         <SelectContent>{years.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
+                    <div className="space-y-2">
+                      <Label>Status Pembayaran</Label>
+                      <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+                        <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Semua</SelectItem>
+                          <SelectItem value="lunas">Lunas</SelectItem>
+                          <SelectItem value="belum">Belum Lunas</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </>
                 )}
 
                 {reportType === 'student' && (
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Pilih Siswa</Label>
-                    <Select value={selectedStudent} onValueChange={setSelectedStudent}>
-                      <SelectTrigger><SelectValue placeholder="Cari Siswa..." /></SelectTrigger>
-                      <SelectContent>
-                        {students.map(s => <SelectItem key={s.id} value={s.id}>{s.nis} - {s.nama} ({s.kelas})</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                  <div className="space-y-2 md:col-span-2 grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Pilih Siswa</Label>
+                      <Select value={selectedStudent} onValueChange={setSelectedStudent}>
+                        <SelectTrigger><SelectValue placeholder="Cari Siswa..." /></SelectTrigger>
+                        <SelectContent>
+                          {students.map(s => <SelectItem key={s.id} value={s.id}>{s.nis} - {s.nama} ({s.kelas})</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Status</Label>
+                      <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+                        <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Semua</SelectItem>
+                          <SelectItem value="lunas">Lunas</SelectItem>
+                          <SelectItem value="belum">Belum Lunas</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 )}
 
@@ -242,6 +282,18 @@ const AdminReports = () => {
                   <SummaryCard title="Total Dibayar" value={fmt(reportData.summary.total_dibayar)} color="green" />
                   <SummaryCard title="Sisa Tagihan" value={fmt(reportData.summary.sisa_tagihan)} color="red" />
                   <SummaryCard title="Status" value={reportData.summary.sisa_tagihan === 0 ? "LUNAS" : "MENUNGGAK"} color={reportData.summary.sisa_tagihan === 0 ? "emerald" : "red"} />
+                </>
+              ) : reportType === 'arrears' ? (
+                <>
+                  <SummaryCard title="Total Tunggakan" value={fmt(reportData.reduce((acc, b) => acc + b.jumlah, 0))} color="red" />
+                  <SummaryCard title="Jumlah Item" value={reportData.length} color="indigo" />
+                </>
+              ) : reportType === 'class-recap' ? (
+                <>
+                  <SummaryCard title="Total Tagihan" value={fmt(reportData.reduce((acc, c) => acc + c.total_tagihan, 0))} color="blue" />
+                  <SummaryCard title="Total Lunas" value={fmt(reportData.reduce((acc, c) => acc + c.pembayaran_lunas, 0))} color="green" />
+                  <SummaryCard title="Total Tunggakan" value={fmt(reportData.reduce((acc, c) => acc + c.total_tunggakan, 0))} color="red" />
+                  <SummaryCard title="Siswa" value={reportData.reduce((acc, c) => acc + c.jumlah_siswa, 0)} color="indigo" />
                 </>
               ) : (
                 <>
@@ -298,10 +350,29 @@ const AdminReports = () => {
                           {reportType === 'class' && <TableHead>Status</TableHead>}
                         </TableRow>
                       )}
+                      {reportType === 'arrears' && (
+                        <TableRow>
+                          <TableHead>Siswa</TableHead>
+                          <TableHead>Kelas</TableHead>
+                          <TableHead>Bulan/Tahun</TableHead>
+                          <TableHead>Nominal</TableHead>
+                        </TableRow>
+                      )}
+                      {reportType === 'class-recap' && (
+                        <TableRow>
+                          <TableHead>Nama Kelas</TableHead>
+                          <TableHead>Jumlah Siswa</TableHead>
+                          <TableHead>Total Tagihan</TableHead>
+                          <TableHead>Pembayaran Lunas</TableHead>
+                          <TableHead>Total Tunggakan</TableHead>
+                        </TableRow>
+                      )}
                       {reportType === 'monthly' && (
                         <TableRow>
                           <TableHead>Siswa</TableHead>
                           <TableHead>Kelas</TableHead>
+                          <TableHead>Bulan/Tahun</TableHead>
+                          <TableHead>Tgl Bayar</TableHead>
                           <TableHead>Metode</TableHead>
                           <TableHead>Jumlah</TableHead>
                           <TableHead>Status</TableHead>
@@ -343,15 +414,34 @@ const AdminReports = () => {
                           <TableCell className="text-red-600">{fmt(c.total_tunggakan)}</TableCell>
                         </TableRow>
                       ))}
+                      {reportType === 'arrears' && reportData.map((b, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-medium">{b.siswa?.nama}</TableCell>
+                          <TableCell>{b.siswa?.kelas}</TableCell>
+                          <TableCell>{b.bulan} {b.tahun}</TableCell>
+                          <TableCell className="text-red-600 font-semibold">{fmt(b.jumlah)}</TableCell>
+                        </TableRow>
+                      ))}
+                      {reportType === 'class-recap' && reportData.map((c, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-medium">{c.nama_kelas}</TableCell>
+                          <TableCell>{c.jumlah_siswa}</TableCell>
+                          <TableCell>{fmt(c.total_tagihan)}</TableCell>
+                          <TableCell className="text-green-600 font-semibold">{fmt(c.pembayaran_lunas)}</TableCell>
+                          <TableCell className="text-red-600 font-semibold">{fmt(c.total_tunggakan)}</TableCell>
+                        </TableRow>
+                      ))}
                       {reportType === 'monthly' && reportData.payments.map((p, i) => (
                         <TableRow key={i}>
-                          <TableCell>{p.siswa?.nama}</TableCell>
+                          <TableCell className="font-medium">{p.siswa?.nama}</TableCell>
                           <TableCell>{p.siswa?.kelas}</TableCell>
+                          <TableCell>{p.tagihan?.bulan} {p.tagihan?.tahun}</TableCell>
+                          <TableCell>{p.tanggal_bayar ? new Date(p.tanggal_bayar).toLocaleDateString('id-ID') : '-'}</TableCell>
                           <TableCell>{p.metode}</TableCell>
-                          <TableCell>{fmt(p.jumlah)}</TableCell>
+                          <TableCell className="font-semibold">{fmt(p.jumlah)}</TableCell>
                           <TableCell>
-                            <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-semibold">
-                              DITERIMA
+                            <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-semibold uppercase">
+                              {p.status}
                             </span>
                           </TableCell>
                         </TableRow>

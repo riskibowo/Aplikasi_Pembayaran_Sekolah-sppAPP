@@ -13,6 +13,7 @@ import { Plus, Edit, Trash2, ShieldCheck, UserCog, Ban, CheckCircle } from 'luci
 
 const StaffManagement = () => {
     const [staff, setStaff] = useState([]);
+    const [onlineUsers, setOnlineUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showDialog, setShowDialog] = useState(false);
     const [editMode, setEditMode] = useState(false);
@@ -28,7 +29,23 @@ const StaffManagement = () => {
 
     useEffect(() => {
         fetchStaff();
+        fetchOnlineUsers();
+
+        // Refresh online status every 10 seconds
+        const interval = setInterval(fetchOnlineUsers, 10000);
+        return () => clearInterval(interval);
     }, []);
+
+    const fetchOnlineUsers = async () => {
+        try {
+            const response = await axios.get(`${API}/auth/online-users`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setOnlineUsers(response.data);
+        } catch (error) {
+            console.error('Gagal memuat status online');
+        }
+    };
 
     const fetchStaff = async () => {
         try {
@@ -182,10 +199,19 @@ const StaffManagement = () => {
                                                 </span>
                                             </TableCell>
                                             <TableCell>
-                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${s.is_active !== false ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                                    }`}>
-                                                    {s.is_active !== false ? 'AKTIF' : 'BANNED'}
-                                                </span>
+                                                <div className="flex flex-col space-y-1">
+                                                    <span className={`px-3 py-1 rounded-full text-xs font-bold w-fit ${s.is_active !== false ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                                        }`}>
+                                                        {s.is_active !== false ? 'AKTIF' : 'BANNED'}
+                                                    </span>
+                                                    {s.is_active !== false && (
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold w-fit flex items-center ${onlineUsers.includes(s.id) ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'
+                                                            }`}>
+                                                            <span className={`w-2 h-2 rounded-full mr-2 ${onlineUsers.includes(s.id) ? 'bg-blue-500 animate-pulse' : 'bg-gray-400'}`}></span>
+                                                            {onlineUsers.includes(s.id) ? 'ONLINE' : 'OFFLINE'}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex items-center justify-end space-x-2">

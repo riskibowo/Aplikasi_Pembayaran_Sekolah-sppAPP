@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 
 const AdminDashboard = () => {
   const [stats, setStats] = useState(null);
+  const [onlineCount, setOnlineCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [arrearsDetail, setArrearsDetail] = useState([]);
   const [showArrears, setShowArrears] = useState(false);
@@ -34,7 +35,19 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     fetchStats();
+    fetchOnlineCount();
+    const interval = setInterval(fetchOnlineCount, 10000);
+    return () => clearInterval(interval);
   }, []);
+
+  const fetchOnlineCount = async () => {
+    try {
+      const response = await axios.get(`${API}/auth/online-users`);
+      setOnlineCount(response.data.length);
+    } catch (error) {
+      console.error('Error fetching online count:', error);
+    }
+  };
 
   const fetchStats = async () => {
     try {
@@ -98,7 +111,16 @@ const AdminDashboard = () => {
       color: 'from-red-500 to-red-600',
       testid: 'students-debt'
     },
+    {
+      title: 'User Online',
+      value: onlineCount,
+      icon: TrendingUp,
+      color: 'from-purple-500 to-purple-600',
+      testid: 'online-users'
+    },
   ];
+
+  const gridCols = `grid grid-cols-1 md:grid-cols-${statCards.length} gap-6`;
 
   return (
     <Layout>
@@ -109,7 +131,7 @@ const AdminDashboard = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className={gridCols}>
           {statCards.map((card, index) => {
             const Icon = card.icon;
             return (

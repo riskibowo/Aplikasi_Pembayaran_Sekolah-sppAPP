@@ -27,6 +27,10 @@ import MasterDashboard from "./pages/master/Dashboard";
 import StaffManagement from "./pages/master/StaffManagement";
 import LoginTraffic from "./pages/master/LoginTraffic";
 
+// WebSocket Hook
+import useWebSocket from "./hooks/useWebSocket";
+
+
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
@@ -49,6 +53,9 @@ function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem("token"));
   const [loading, setLoading] = useState(true);
+
+  // Initialize WebSocket connection when user is logged in
+  useWebSocket(user?.id);
 
   useEffect(() => {
     if (token) {

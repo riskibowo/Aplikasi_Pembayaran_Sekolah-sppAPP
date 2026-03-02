@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -64,6 +64,33 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # JWT Configuration
 SECRET_KEY = os.environ.get("SECRET_KEY", "your-secret-key-change-this")
 ALGORITHM = "HS256"
+
+# Connection Manager for WebSockets
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[str, set[WebSocket]] = {}
+
+    async def connect(self, user_id: str, websocket: WebSocket):
+        await websocket.accept()
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = set()
+        self.active_connections[user_id].add(websocket)
+        print(f"[WS] User {user_id} connected. Total active: {len(self.active_connections)}")
+
+    def disconnect(self, user_id: str, websocket: WebSocket):
+        if user_id in self.active_connections:
+            self.active_connections[user_id].discard(websocket)
+            if not self.active_connections[user_id]:
+                del self.active_connections[user_id]
+        print(f"[WS] User {user_id} disconnected. Remaining users: {len(self.active_connections)}")
+
+    def get_online_users(self):
+        return list(self.active_connections.keys())
+
+    def is_user_online(self, user_id: str):
+        return user_id in self.active_connections
+
+manager = ConnectionManager()
 
 # Utility functions
 def hash_password(password: str) -> str:
@@ -602,6 +629,21 @@ async def login(request: LoginRequest, fastapi_request: Request):
         await log_attempt("failed (unknown user)")
 
     raise HTTPException(status_code=401, detail="Username atau password salah")
+
+@app.websocket("/api/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await manager.connect(user_id, websocket)
+    try:
+        while True:
+            # Keep the connection open
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(user_id, websocket)
+
+@api_router.get("/auth/online-users")
+async def get_online_users(current_user: Annotated[dict, Depends(get_current_user)]):
+    # Only admin/master can see full online list if needed, or everyone can see for status badges
+    return manager.get_online_users()
 
 @api_router.get("/auth/me")
 async def get_me(user_data: Annotated[dict, Depends(get_current_user)]):
@@ -1213,33 +1255,57 @@ async def get_daily_report(current_user: Annotated[dict, Depends(get_current_use
     return {"total": total, "payments": daily_payments}
 
 @api_router.get("/reports/monthly")
-async def get_monthly_report(bulan: str, tahun: int, current_user: Annotated[dict, Depends(get_current_user)]):
+async def get_monthly_report(bulan: str, tahun: int, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_current_user)] = None):
     if current_user.get("role") not in ["admin", "kepsek", "master"]:
         raise HTTPException(status_code=403, detail="Not authorized")
-    payments = await db.payments.find({}, {"_id": 0}).to_list(1000)
-    bills = await db.bills.find({"bulan": bulan, "tahun": tahun}, {"_id": 0}).to_list(1000)
     
-    # Filter payments for this month
-    month_key = f"{tahun}-{str(list(calendar.month_name).index(bulan)).zfill(2) if bulan in calendar.month_name else '01'}"
-    monthly_payments = [p for p in payments if isinstance(p["tanggal_bayar"], str) and p["tanggal_bayar"].startswith(month_key)]
+    # Filter bills for the summary
+    bills_query = {"bulan": bulan, "tahun": tahun}
+    bills = await db.bills.find(bills_query, {"_id": 0}).to_list(1000)
     
-    total = sum(p["jumlah"] for p in monthly_payments)
+    # Filter payments for this month/year context
+    # Get payments that were accepted and belong to bills of this month/year OR paid in this month/year?
+    # Usually, "Monthly Report" for a school means payments made FOR bills of month X.
+    
+    bill_ids = [b["id"] for b in bills]
+    payments_query = {"id_tagihan": {"$in": bill_ids}, "status": "diterima"}
+    
+    if status == "lunas":
+        # Only lunas bills
+        bills = [b for b in bills if b["status"] == "lunas"]
+    elif status == "belum":
+        # Only belum lunas bills
+        bills = [b for b in bills if b["status"] != "lunas"]
+
+    payments = await db.payments.find(payments_query, {"_id": 0}).to_list(1000)
+    
+    # Enrich payments with student data
+    enriched_payments = []
+    for p in payments:
+        student = await db.students.find_one({"id": p["id_siswa"]}, {"_id": 0})
+        bill = await db.bills.find_one({"id": p["id_tagihan"]}, {"_id": 0})
+        if student and bill:
+            p["siswa"] = {"nama": student["nama"], "nis": student["nis"], "kelas": student["kelas"]}
+            p["tagihan"] = {"bulan": bill["bulan"], "tahun": bill["tahun"]}
+            enriched_payments.append(p)
+    
+    total_pemasukan = sum(p["jumlah"] for p in payments)
     total_tagihan = len(bills)
     total_lunas = len([b for b in bills if b["status"] == "lunas"])
-    total_belum = total_tagihan - total_lunas
+    total_belum_lunas = len([b for b in bills if b["status"] != "lunas"])
     
     return {
         "bulan": bulan,
         "tahun": tahun,
-        "total_pemasukan": total,
+        "total_pemasukan": total_pemasukan,
         "total_tagihan": total_tagihan,
         "total_lunas": total_lunas,
-        "total_belum_lunas": total_belum,
-        "payments": monthly_payments
+        "total_belum_lunas": total_belum_lunas,
+        "payments": enriched_payments
     }
 
 @api_router.get("/reports/student/{student_id}")
-async def get_student_report(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+async def get_student_report(student_id: str, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_current_user)] = None):
     role = current_user.get("role")
     user_id = current_user.get("user_id")
     
@@ -1255,14 +1321,20 @@ async def get_student_report(student_id: str, current_user: Annotated[dict, Depe
     if not student:
         raise HTTPException(status_code=404, detail="Siswa tidak ditemukan")
     
-    # Get all bills for this student
-    bills = await db.bills.find({"id_siswa": student_id}, {"_id": 0}).to_list(1000)
+    # Get bills for this student
+    bills_query = {"id_siswa": student_id}
+    if status == "lunas":
+        bills_query["status"] = "lunas"
+    elif status == "belum":
+        bills_query["status"] = "belum"
+        
+    bills = await db.bills.find(bills_query, {"_id": 0}).to_list(1000)
     
     # Get all payments for this student
-    payments = await db.payments.find({"id_siswa": student_id}, {"_id": 0}).to_list(1000)
+    payments = await db.payments.find({"id_siswa": student_id, "status": "diterima"}, {"_id": 0}).to_list(1000)
     
     total_tagihan = sum(b["jumlah"] for b in bills)
-    total_dibayar = sum(p["jumlah"] for p in payments if p["status"] == "diterima")
+    total_dibayar = sum(p["jumlah"] for p in payments)
     
     return {
         "student": student,
@@ -1275,51 +1347,54 @@ async def get_student_report(student_id: str, current_user: Annotated[dict, Depe
         }
     }
 
-@api_router.get("/reports/class/{class_name}")
-async def get_class_report(class_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
+@api_router.get("/reports/arrears")
+async def get_arrears_report(current_user: Annotated[dict, Depends(get_current_user)] = None):
     if current_user.get("role") not in ["admin", "kepsek", "master"]:
         raise HTTPException(status_code=403, detail="Not authorized")
-    # Get all students in this class
-    students = await db.students.find({"kelas": class_name}, {"_id": 0}).to_list(1000)
-    student_ids = [s["id"] for s in students]
     
-    # Get all bills for these students
-    bills = await db.bills.find({"id_siswa": {"$in": student_ids}}, {"_id": 0}).to_list(5000)
+    # Condition: status: "belum"
+    bills = await db.bills.find({"status": "belum"}, {"_id": 0}).to_list(5000)
     
-    # Get all payments for these students
-    payments = await db.payments.find({"id_siswa": {"$in": student_ids}, "status": "diterima"}, {"_id": 0}).to_list(5000)
-    
-    total_estimasi = sum(b["jumlah"] for b in bills)
-    total_masuk = sum(p["jumlah"] for p in payments)
-    
-    # Per student breakdown
-    breakdown = []
-    for student in students:
-        s_bills = [b for b in bills if b["id_siswa"] == student["id"]]
-        s_payments = [p for p in payments if p["id_siswa"] == student["id"]]
+    enriched_bills = []
+    for b in bills:
+        student = await db.students.find_one({"id": b["id_siswa"]}, {"_id": 0})
+        if student:
+            b["siswa"] = {"nama": student["nama"], "nis": student["nis"], "kelas": student["kelas"]}
+            enriched_bills.append(b)
+            
+    return enriched_bills
+
+@api_router.get("/reports/class-recap")
+async def get_class_recap_report(current_user: Annotated[dict, Depends(get_current_user)] = None):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
         
-        s_total = sum(b["jumlah"] for b in s_bills)
-        s_paid = sum(p["jumlah"] for p in s_payments)
+    classes = await db.classes.find({}, {"_id": 0}).to_list(100)
+    recap = []
+    
+    for cls in classes:
+        class_name = cls["nama_kelas"]
+        students = await db.students.find({"kelas": class_name}, {"_id": 0}).to_list(1000)
+        student_ids = [s["id"] for s in students]
         
-        breakdown.append({
-            "nis": student.get("nis", "-"),
-            "nama": student.get("nama", "-"),
-            "total_tagihan": s_total,
-            "total_dibayar": s_paid,
-            "status": "Lunas" if s_total > 0 and s_total == s_paid else "Belum Lunas"
+        bills = await db.bills.find({"id_siswa": {"$in": student_ids}}, {"_id": 0}).to_list(5000)
+        
+        total_tagihan = sum(b["jumlah"] for b in bills)
+        pembayaran_lunas = sum(b["jumlah"] for b in bills if b["status"] == "lunas")
+        total_tunggakan = total_tagihan - pembayaran_lunas
+        
+        recap.append({
+            "nama_kelas": class_name,
+            "jumlah_siswa": len(students),
+            "total_tagihan": total_tagihan,
+            "pembayaran_lunas": pembayaran_lunas,
+            "total_tunggakan": total_tunggakan
         })
-    
-    return {
-        "class_name": class_name,
-        "total_estimasi": total_estimasi,
-        "total_masuk": total_masuk,
-        "total_tunggakan": total_estimasi - total_masuk,
-        "student_count": len(students),
-        "breakdown": breakdown
-    }
+        
+    return recap
 
 @api_router.get("/reports/batch/{batch}")
-async def get_batch_report(batch: str, current_user: Annotated[dict, Depends(get_current_user)]):
+async def get_batch_report(batch: str, current_user: Annotated[dict, Depends(get_current_user)] = None):
     if current_user.get("role") not in ["admin", "kepsek", "master"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     # Get all students in this batch (angkatan)
@@ -1369,11 +1444,13 @@ async def get_batch_report(batch: str, current_user: Annotated[dict, Depends(get
 import calendar
 
 @api_router.get("/reports/export-pdf")
-async def export_pdf(bulan: str, tahun: int, current_user: Annotated[dict, Depends(get_current_user)]):
+async def export_pdf(bulan: str, tahun: int, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_current_user)] = None):
     if current_user.get("role") not in ["admin", "kepsek", "master"]:
         raise HTTPException(status_code=403, detail="Not authorized")
-    # Get data
-    bills = await db.bills.find({"bulan": bulan, "tahun": tahun}, {"_id": 0}).to_list(1000)
+    
+    # Get filtered data
+    report_data = await get_monthly_report(bulan, tahun, status, current_user)
+    payments = report_data["payments"]
     
     # Create PDF
     buffer = BytesIO()
@@ -1420,42 +1497,49 @@ async def export_pdf(bulan: str, tahun: int, current_user: Annotated[dict, Depen
     elements.append(Spacer(1, 0.2*inch))
     
     # Title
-    title = Paragraph(f"LAPORAN PEMBAYARAN SPP BULANAN<br/>{bulan} {tahun}", title_style)
+    filter_text = f" ({status.upper()})" if status and status != 'all' else ""
+    title = Paragraph(f"LAPORAN PEMBAYARAN SPP BULANAN{filter_text}<br/>{bulan} {tahun}", title_style)
     elements.append(title)
     elements.append(Spacer(1, 0.2*inch))
     
     # Table data
-    data = [['No', 'NIS', 'Nama', 'Kelas', 'Jumlah', 'Status']]
+    data = [['No', 'NIS', 'Nama', 'Kelas', 'Tgl Bayar', 'Jumlah', 'Status']]
     
-    total_lunas = 0
-    for idx, bill in enumerate(bills, 1):
-        student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
-        if student:
-            data.append([
-                str(idx),
-                student['nis'],
-                student['nama'],
-                student['kelas'],
-                f"Rp {bill['jumlah']:,.0f}",
-                bill['status'].upper()
-            ])
-            if bill['status'] == 'lunas':
-                total_lunas += bill['jumlah']
+    total_jumlah = 0
+    for idx, p in enumerate(payments, 1):
+        # Format date from ISO to DD/MM/YYYY
+        tgl_bayar = "-"
+        if 'tanggal_bayar' in p:
+            try:
+                dt = datetime.fromisoformat(p['tanggal_bayar'].replace('Z', '+00:00'))
+                tgl_bayar = dt.strftime("%d/%m/%Y")
+            except:
+                tgl_bayar = p['tanggal_bayar'].split('T')[0]
+
+        data.append([
+            str(idx),
+            p['siswa']['nis'],
+            p['siswa']['nama'],
+            p['siswa']['kelas'],
+            tgl_bayar,
+            f"Rp {p['jumlah']:,.0f}",
+            p['status'].upper()
+        ])
+        total_jumlah += p['jumlah']
     
     # Add total row
-    data.append(['', '', '', '', f"Total: Rp {total_lunas:,.0f}", ''])
+    data.append(['', '', '', '', 'Total:', f"Rp {total_jumlah:,.0f}", ''])
     
     # Create table
-    table = Table(data, colWidths=[0.5*inch, 1*inch, 2*inch, 1*inch, 1.5*inch, 1*inch])
+    table = Table(data, colWidths=[0.4*inch, 0.8*inch, 1.8*inch, 0.8*inch, 1*inch, 1.2*inch, 1*inch])
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a8a')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -2), colors.beige),
-        ('GRID', (0, 0), (-1, -2), 1, colors.black),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
         ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#fbbf24')),
         ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
     ]))
@@ -1466,29 +1550,31 @@ async def export_pdf(bulan: str, tahun: int, current_user: Annotated[dict, Depen
     doc.build(elements)
     buffer.seek(0)
     
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}.pdf"})
+    status_suffix = f"_{status}" if status else ""
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}{status_suffix}.pdf"})
 
 @api_router.get("/reports/export-xlsx")
-async def export_xlsx(bulan: str, tahun: int, current_user: Annotated[dict, Depends(get_current_user)]):
+async def export_xlsx(bulan: str, tahun: int, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_current_user)] = None):
     if current_user.get("role") not in ["admin", "kepsek", "master"]:
         raise HTTPException(status_code=403, detail="Not authorized")
-    # Get data
-    bills = await db.bills.find({"bulan": bulan, "tahun": tahun}, {"_id": 0}).to_list(1000)
+        
+    report_data = await get_monthly_report(bulan, tahun, status, current_user)
+    payments = report_data["payments"]
     
     # Prepare data
     data_list = []
-    for bill in bills:
-        student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
-        if student:
-            data_list.append({
-                'NIS': student['nis'],
-                'Nama': student['nama'],
-                'Kelas': student['kelas'],
-                'Bulan': bill['bulan'],
-                'Tahun': bill['tahun'],
-                'Jumlah': bill['jumlah'],
-                'Status': bill['status'].upper()
-            })
+    for p in payments:
+        tgl_bayar = p.get('tanggal_bayar', '-').split('T')[0] if 'tanggal_bayar' in p else '-'
+        data_list.append({
+            'NIS': p['siswa']['nis'],
+            'Nama': p['siswa']['nama'],
+            'Kelas': p['siswa']['kelas'],
+            'Bulan Tagihan': p['tagihan']['bulan'],
+            'Tahun Tagihan': p['tagihan']['tahun'],
+            'Tanggal Bayar': tgl_bayar,
+            'Jumlah': p['jumlah'],
+            'Status': p['status'].upper()
+        })
     
     # Create Excel
     df = pd.DataFrame(data_list)
@@ -1497,13 +1583,14 @@ async def export_xlsx(bulan: str, tahun: int, current_user: Annotated[dict, Depe
         df.to_excel(writer, index=False, sheet_name='Laporan SPP')
     buffer.seek(0)
     
-    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}.xlsx"})
+    status_suffix = f"_{status}" if status else ""
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_{bulan}_{tahun}{status_suffix}.xlsx"})
 
 @api_router.get("/reports/student/{student_id}/export-pdf")
-async def export_student_pdf(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+async def export_student_pdf(student_id: str, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_current_user)] = None):
     # Log for debugging
-    logging.info(f"Export student PDF request: student={student_id}, user={current_user.get('user_id')}")
-    report = await get_student_report(student_id, current_user)
+    logging.info(f"Export student PDF request: student={student_id}, user={current_user.get('user_id')}, status={status}")
+    report = await get_student_report(student_id, status, current_user)
     student = report['student']
     
     buffer = BytesIO()
@@ -1541,7 +1628,8 @@ async def export_student_pdf(student_id: str, current_user: Annotated[dict, Depe
     elements.append(Paragraph("-" * 95, a_style))
     elements.append(Spacer(1, 0.2*inch))
     
-    elements.append(Paragraph(f"LAPORAN PEMBAYARAN SISWA", title_style))
+    status_text = f" ({status.upper()})" if status else ""
+    elements.append(Paragraph(f"LAPORAN PEMBAYARAN SISWA{status_text}", title_style))
     
     info_data = [
         [Paragraph(f"Nama: <b>{student.get('nama', '-')}</b>", styles['Normal']), Paragraph(f"NIS: <b>{student.get('nis', '-')}</b>", styles['Normal'])],
@@ -1571,7 +1659,8 @@ async def export_student_pdf(student_id: str, current_user: Annotated[dict, Depe
     doc.build(elements)
     buffer.seek(0)
     nis_val = str(student.get('nis', 'data'))
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{nis_val}.pdf"})
+    status_suffix = f"_{status}" if status else ""
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{nis_val}{status_suffix}.pdf"})
 
 @api_router.get("/reports/class/{class_name}/export-pdf")
 async def export_class_pdf(class_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
@@ -1700,8 +1789,8 @@ async def export_batch_pdf(batch: str, current_user: Annotated[dict, Depends(get
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=laporan_angkatan_{batch}.pdf"})
 
 @api_router.get("/reports/student/{student_id}/export-xlsx")
-async def export_student_xlsx(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
-    report = await get_student_report(student_id, current_user)
+async def export_student_xlsx(student_id: str, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_current_user)] = None):
+    report = await get_student_report(student_id, status, current_user)
     student = report['student']
     
     data_list = []
@@ -1720,7 +1809,8 @@ async def export_student_xlsx(student_id: str, current_user: Annotated[dict, Dep
     buffer.seek(0)
     
     nis_val = str(student.get('nis', 'data'))
-    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{nis_val}.xlsx"})
+    status_suffix = f"_{status}" if status else ""
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_siswa_{nis_val}{status_suffix}.xlsx"})
 
 @api_router.get("/reports/class/{class_name}/export-xlsx")
 async def export_class_xlsx(class_name: str, current_user: Annotated[dict, Depends(get_current_user)]):
@@ -1766,8 +1856,160 @@ async def export_batch_xlsx(batch: str, current_user: Annotated[dict, Depends(ge
     buffer.seek(0)
     
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename=laporan_angkatan_{batch}.xlsx"})
-# ---------------------------
-# ---------------------------
+@api_router.get("/reports/arrears/export-pdf")
+async def export_arrears_pdf(current_user: Annotated[dict, Depends(get_current_user)] = None):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    bills = await get_arrears_report(current_user)
+    
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
+    
+    # --- Header ---
+    school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
+    if not school: school = {"nama_sekolah": "SMK MEKAR MURNI", "alamat": "Jl. Pendidikan No. 123", "no_telp": "-"}
+    h_style = ParagraphStyle('RepHeader', fontSize=14, fontName='Helvetica-Bold', alignment=TA_CENTER)
+    a_style = ParagraphStyle('RepAddr', fontSize=10, fontName='Helvetica', alignment=TA_CENTER)
+    
+    elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
+    elements.append(Paragraph(school['alamat'], a_style))
+    elements.append(Spacer(1, 0.1*inch))
+    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
+    elements.append(Paragraph(f"LAPORAN TUNGGAKAN SISWA", title_style))
+    
+    data = [['No', 'NIS', 'Nama', 'Kelas', 'Bulan/Tahun', 'Jumlah']]
+    total_tunggakan = 0
+    for idx, b in enumerate(bills, 1):
+        data.append([
+            str(idx),
+            b['siswa']['nis'],
+            b['siswa']['nama'],
+            b['siswa']['kelas'],
+            f"{b['bulan']} {b['tahun']}",
+            f"Rp {b['jumlah']:,.0f}"
+        ])
+        total_tunggakan += b['jumlah']
+    
+    data.append(['', '', '', '', 'Total:', f"Rp {total_tunggakan:,.0f}"])
+    
+    t = Table(data, colWidths=[0.5*inch, 1*inch, 2*inch, 1*inch, 1*inch, 1.2*inch])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a8a')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('GRID', (0, 0), (-1, -2), 1, colors.black),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold')
+    ]))
+    elements.append(t)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=laporan_tunggakan.pdf"})
+
+@api_router.get("/reports/arrears/export-xlsx")
+async def export_arrears_xlsx(current_user: Annotated[dict, Depends(get_current_user)] = None):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    bills = await get_arrears_report(current_user)
+    
+    data_list = []
+    for b in bills:
+        data_list.append({
+            'NIS': b['siswa']['nis'],
+            'Nama': b['siswa']['nama'],
+            'Kelas': b['siswa']['kelas'],
+            'Bulan': b['bulan'],
+            'Tahun': b['tahun'],
+            'Jumlah': b['jumlah']
+        })
+    
+    df = pd.DataFrame(data_list)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Tunggakan')
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=laporan_tunggakan.xlsx"})
+
+@api_router.get("/reports/class-recap/export-pdf")
+async def export_class_recap_pdf(current_user: Annotated[dict, Depends(get_current_user)] = None):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    recap = await get_class_recap_report(current_user)
+    
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
+    
+    # --- Header ---
+    school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
+    if not school: school = {"nama_sekolah": "SMK MEKAR MURNI", "alamat": "Jl. Pendidikan No. 123", "no_telp": "-"}
+    h_style = ParagraphStyle('RepHeader', fontSize=14, fontName='Helvetica-Bold', alignment=TA_CENTER)
+    a_style = ParagraphStyle('RepAddr', fontSize=10, fontName='Helvetica', alignment=TA_CENTER)
+    
+    elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
+    elements.append(Paragraph(school['alamat'], a_style))
+    elements.append(Spacer(1, 0.1*inch))
+    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
+    elements.append(Paragraph(f"REKAP PEMBAYARAN PER KELAS", title_style))
+    
+    data = [['Kelas', 'Siswa', 'Total Tagihan', 'Lunas', 'Tunggakan']]
+    for c in recap:
+        data.append([
+            c['nama_kelas'],
+            str(c['jumlah_siswa']),
+            f"Rp {c['total_tagihan']:,.0f}",
+            f"Rp {c['pembayaran_lunas']:,.0f}",
+            f"Rp {c['total_tunggakan']:,.0f}"
+        ])
+    
+    t = Table(data, colWidths=[1.5*inch, 0.8*inch, 1.5*inch, 1.2*inch, 1.5*inch])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a8a')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    elements.append(t)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=recap_per_kelas.pdf"})
+
+@api_router.get("/reports/class-recap/export-xlsx")
+async def export_class_recap_xlsx(current_user: Annotated[dict, Depends(get_current_user)] = None):
+    if current_user.get("role") not in ["admin", "kepsek", "master"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    recap = await get_class_recap_report(current_user)
+    
+    data_list = []
+    for c in recap:
+        data_list.append({
+            'Nama Kelas': c['nama_kelas'],
+            'Jumlah Siswa': c['jumlah_siswa'],
+            'Total Tagihan': c['total_tagihan'],
+            'Lunas': c['pembayaran_lunas'],
+            'Tunggakan': c['total_tunggakan']
+        })
+    
+    df = pd.DataFrame(data_list)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Rekap Kelas')
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=recap_per_kelas.xlsx"})
 
 # Student Portal Routes
 

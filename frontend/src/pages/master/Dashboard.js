@@ -7,24 +7,41 @@ import { ShieldCheck, Settings, Users, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const MasterDashboard = () => {
-    const [stats, setStats] = useState({ staff_count: 0, school_name: '' });
+    const [stats, setStats] = useState({ staff_count: 0, school_name: '', online_count: 0 });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         fetchData();
+        const interval = setInterval(fetchOnlineCount, 10000);
+        return () => clearInterval(interval);
     }, []);
+
+    const fetchOnlineCount = async () => {
+        try {
+            const res = await axios.get(`${API}/auth/online-users`, {
+                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+            });
+            setStats(prev => ({ ...prev, online_count: res.data.length }));
+        } catch (error) {
+            console.error('Error fetching online count:', error);
+        }
+    };
 
     const fetchData = async () => {
         try {
-            const [staffRes, profileRes] = await Promise.all([
+            const [staffRes, profileRes, onlineRes] = await Promise.all([
                 axios.get(`${API}/master/staff`, {
                     headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
                 }),
-                axios.get(`${API}/school-profile`)
+                axios.get(`${API}/school-profile`),
+                axios.get(`${API}/auth/online-users`, {
+                    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+                })
             ]);
             setStats({
                 staff_count: staffRes.data.length,
-                school_name: profileRes.data?.nama_sekolah || 'Belum diatur'
+                school_name: profileRes.data?.nama_sekolah || 'Belum diatur',
+                online_count: onlineRes.data.length
             });
         } catch (error) {
             console.error('Error fetching master stats:', error);
@@ -65,10 +82,18 @@ const MasterDashboard = () => {
                     <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-900 to-indigo-900 text-white">
                         <CardContent className="pt-6">
                             <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-blue-200 text-sm font-medium">Total Akun Staf</p>
-                                    <h3 className="text-4xl font-bold mt-1">{stats.staff_count}</h3>
-                                    <p className="text-xs text-blue-300 mt-2">Admin TU & Kepala Sekolah</p>
+                                <div className="space-y-4">
+                                    <div>
+                                        <p className="text-blue-200 text-sm font-medium">Total Akun Staf</p>
+                                        <h3 className="text-3xl font-bold mt-1">{stats.staff_count}</h3>
+                                    </div>
+                                    <div>
+                                        <p className="text-blue-200 text-sm font-medium flex items-center">
+                                            <span className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></span>
+                                            Sedang Online
+                                        </p>
+                                        <h3 className="text-3xl font-bold mt-1">{stats.online_count}</h3>
+                                    </div>
                                 </div>
                                 <div className="p-4 bg-white/10 rounded-2xl">
                                     <Users className="w-10 h-10 text-white" />
