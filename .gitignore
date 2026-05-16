@@ -31,7 +31,18 @@ dist/
 dist
 
 # Environment files (comprehensive coverage)
-
+.env
+.env.local
+.env.*
+backend/.env
+frontend/.env
+*.json
+!package.json
+!composer.json
+!tsconfig.json
+client_secret_*.json
+google-credentials.json
+gen-lang-client-*.json
 *token.json*
 *credentials.json*
 

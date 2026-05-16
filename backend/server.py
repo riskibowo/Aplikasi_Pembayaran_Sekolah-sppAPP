@@ -12,6 +12,11 @@ import logging
 import bcrypt # Added for fix
 from pathlib import Path
 
+# Google Drive API Imports
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+
 # Fix for Passlib/Bcrypt incompatibility error
 if not hasattr(bcrypt, "__about__"):
     bcrypt.__about__ = type("About", (object,), {"__version__": bcrypt.__version__})
@@ -62,7 +67,11 @@ api_router = APIRouter(prefix="/api")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT Configuration
-SECRET_KEY = os.environ.get("SECRET_KEY", "your-secret-key-change-this")
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    # Use a safe fallback only for development, but ideally should raise error in production
+    SECRET_KEY = "dev-secret-key-replace-in-production-1234567890"
+    print("WARNING: SECRET_KEY not found in environment. Using development fallback.")
 ALGORITHM = "HS256"
 
 # Connection Manager for WebSockets
@@ -92,6 +101,64 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Google Drive Utility
+def get_drive_service():
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    refresh_token = os.environ.get("GOOGLE_REFRESH_TOKEN")
+    
+    if not all([client_id, client_secret, refresh_token]):
+        raise Exception("Google Drive OAuth2 configuration missing di .env")
+        
+    creds = Credentials(
+        None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret
+    )
+    return build('drive', 'v3', credentials=creds)
+
+def upload_to_drive(file_content: bytes, filename: str, mimetype: str):
+    folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
+    if not folder_id:
+        raise Exception("GOOGLE_DRIVE_FOLDER_ID missing di .env")
+        
+    try:
+        service = get_drive_service()
+        
+        file_metadata = {
+            'name': filename,
+            'parents': [folder_id]
+        }
+        
+        fh = BytesIO(file_content)
+        media = MediaIoBaseUpload(fh, mimetype=mimetype, resumable=True)
+        
+        file = service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id, webViewLink',
+            supportsAllDrives=True
+        ).execute()
+        
+        file_id = file.get('id')
+
+        # Beri izin agar bisa dilihat via link direct (uc?export=view)
+        service.permissions().create(
+            fileId=file_id,
+            body={'role': 'reader', 'type': 'anyone'},
+            supportsAllDrives=True
+        ).execute()
+        
+        # Gunakan link direct agar bisa dipasang di <img> tag
+        direct_link = f"https://drive.google.com/uc?export=view&id={file_id}"
+        
+        return file_id, direct_link
+    except Exception as e:
+        logging.error(f"Google Drive Upload Error: {str(e)}")
+        raise e
+
 # Utility functions
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
@@ -108,9 +175,42 @@ async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, 
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+        role = payload.get("role")
+        
+        if not user_id or not role:
+            raise HTTPException(status_code=401, detail="Token tidak valid: payload tidak lengkap")
+            
+        # Verify user still exists and is active
+        if role == "siswa":
+            user = await db.students.find_one({"id": user_id})
+        else:
+            user = await db.users.find_one({"id": user_id})
+            
+        if not user:
+            raise HTTPException(status_code=401, detail="User tidak ditemukan")
+        
+        if not user.get("is_active", True):
+            raise HTTPException(status_code=403, detail="Akun telah dinonaktifkan")
+            
         return payload
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Token tidak valid atau kadaluarsa")
+
+async def get_admin_user(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "master"]:
+        raise HTTPException(status_code=403, detail="Akses ditolak: Hanya Admin yang diizinkan")
+    return current_user
+
+async def get_master_user(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Akses ditolak: Hanya Master Administrator yang diizinkan")
+    return current_user
+
+async def get_student_user(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "siswa":
+        raise HTTPException(status_code=403, detail="Akses ditolak: Hanya Siswa yang diizinkan")
+    return current_user
 
 async def log_activity(username: str, role: str, activity_type: str, description: str, ip_address: str = None, user_id: str = None):
     log = ActivityLog(
@@ -214,6 +314,12 @@ class ActivityLog(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ip_address: Optional[str] = None
 
+class BlockedIP(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    ip_address: str
+    reason: str
+    blocked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 # Request/Response Models
 class LoginRequest(BaseModel):
     username: str
@@ -279,7 +385,7 @@ class SchoolProfileUpdate(BaseModel):
     bank_atas_nama: str
 
 @api_router.get("/receipt/bill/{bill_id}")
-async def get_payment_receipt(bill_id: str):
+async def get_payment_receipt(bill_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
     # 1. Cari tagihan (bill)
     bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
     if not bill:
@@ -294,6 +400,12 @@ async def get_payment_receipt(bill_id: str):
     student = await db.students.find_one({"id": bill["id_siswa"]}, {"_id": 0})
     if not student:
         raise HTTPException(status_code=404, detail="Data siswa tidak ditemukan")
+
+    # IDOR Check: Admin/Kepsek/Master or the student themselves
+    role = current_user.get("role")
+    user_id = current_user.get("user_id")
+    if role not in ["admin", "kepsek", "master"] and user_id != student["id"]:
+        raise HTTPException(status_code=403, detail="Anda tidak memiliki akses ke kuitansi ini")
 
     # 4. Cari Info Sekolah
     school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
@@ -458,7 +570,7 @@ async def get_payment_receipt(bill_id: str):
     return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=kuitansi_{student['nis']}_{bill['bulan']}_{bill['tahun']}.pdf"})
 
 @api_router.put("/classes/{class_id}")
-async def update_class(class_id: str, class_data: ClassUpdate):
+async def update_class(class_id: str, class_data: ClassUpdate, current_user: Annotated[dict, Depends(get_admin_user)]):
     exists = await db.classes.find_one({"id": class_id})
     if not exists:
         raise HTTPException(status_code=404, detail="Kelas tidak ditemukan")
@@ -468,7 +580,7 @@ async def update_class(class_id: str, class_data: ClassUpdate):
     return {"message": "Kelas berhasil diupdate"}
 
 @api_router.delete("/classes/{class_id}")
-async def delete_class(class_id: str):
+async def delete_class(class_id: str, current_user: Annotated[dict, Depends(get_admin_user)]):
     # Perlu ditambahkan: Cek apakah ada siswa yang masih menggunakan kelas ini sebelum menghapus
     student_exists = await db.students.find_one({"kelas": (await db.classes.find_one({"id": class_id}))["nama_kelas"]})
     if student_exists:
@@ -553,13 +665,45 @@ async def login(request: LoginRequest, fastapi_request: Request):
     ip_address = fastapi_request.client.host
     user_agent = fastapi_request.headers.get("user-agent", "unknown")
     
-    # Check for suspicious activity (e.g., 5 failed attempts from same IP in last 5 mins)
+    # 1. Check if IP is blocked
+    is_blocked = await db.blocked_ips.find_one({"ip_address": ip_address})
+    if is_blocked:
+        raise HTTPException(status_code=403, detail=f"Akses ditolak. IP {ip_address} telah diblokir karena aktivitas mencurigakan.")
+
+    # 2. Check for suspicious activity (e.g., 5 failed attempts from same IP in last 5 mins)
     five_mins_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     recent_failures = await db.login_logs.count_documents({
         "ip_address": ip_address,
         "status": "failed",
         "timestamp": {"$gte": five_mins_ago}
     })
+    
+    # 3. Check for Global IP Block threshold (e.g., 20 total failures from this IP in 10 mins)
+    ten_mins_ago = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    global_ip_failures = await db.login_logs.count_documents({
+        "ip_address": ip_address,
+        "status": {"$regex": "failed"},
+        "timestamp": {"$gte": ten_mins_ago}
+    })
+
+    is_suspicious = recent_failures >= 5
+    should_auto_ban = recent_failures >= 10
+    should_block_ip = global_ip_failures >= 20
+
+    if should_block_ip:
+        # Automatically block the IP
+        await db.blocked_ips.update_one(
+            {"ip_address": ip_address},
+            {"$set": {
+                "id": str(uuid.uuid4()),
+                "ip_address": ip_address,
+                "reason": f"Terdeteksi serangan spam login ({global_ip_failures} kegagalan dalam 10 menit)",
+                "blocked_at": datetime.now(timezone.utc).isoformat()
+            }},
+            upsert=True
+        )
+        await log_activity("system", "security", "security", f"IP {ip_address} DIBLOKIR OTOMATIS (Serangan spam intensif)", ip_address)
+        raise HTTPException(status_code=403, detail=f"IP Anda ({ip_address}) telah diblokir otomatis karena terdeteksi melakukan spam login.")
     
     is_suspicious = recent_failures >= 5
     should_auto_ban = recent_failures >= 10
@@ -651,17 +795,12 @@ async def get_me(user_data: Annotated[dict, Depends(get_current_user)]):
 
 # Admin Master (Super Admin) - Staff Management
 @api_router.get("/master/staff")
-async def get_staff(current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") != "master":
-        raise HTTPException(status_code=403, detail="Not authorized")
+async def get_staff(current_user: Annotated[dict, Depends(get_master_user)]):
     staff = await db.users.find({"role": {"$in": ["admin", "kepsek"]}}, {"_id": 0}).to_list(100)
     return staff
 
 @api_router.post("/master/staff")
-async def create_staff(staff: StaffCreate, current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") != "master":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    
+async def create_staff(staff: StaffCreate, current_user: Annotated[dict, Depends(get_master_user)]):
     exists = await db.users.find_one({"username": staff.username})
     if exists:
         raise HTTPException(status_code=400, detail="Username sudah digunakan")
@@ -678,10 +817,7 @@ async def create_staff(staff: StaffCreate, current_user: Annotated[dict, Depends
     return {"message": "Akun staf berhasil dibuat", "id": new_staff.id}
 
 @api_router.put("/master/staff/{staff_id}")
-async def update_staff(staff_id: str, staff: StaffCreate, current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") != "master":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    
+async def update_staff(staff_id: str, staff: StaffCreate, current_user: Annotated[dict, Depends(get_master_user)]):
     update_data = {
         "nama": staff.nama,
         "role": staff.role
@@ -695,10 +831,7 @@ async def update_staff(staff_id: str, staff: StaffCreate, current_user: Annotate
     return {"message": "Akun staf berhasil diupdate"}
 
 @api_router.delete("/master/staff/{staff_id}")
-async def delete_staff(staff_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") != "master":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    
+async def delete_staff(staff_id: str, current_user: Annotated[dict, Depends(get_master_user)]):
     result = await db.users.delete_one({"id": staff_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Staf tidak ditemukan")
@@ -706,9 +839,7 @@ async def delete_staff(staff_id: str, current_user: Annotated[dict, Depends(get_
 
 # Master Security Features
 @api_router.get("/master/login-logs")
-async def get_login_logs(current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") != "master":
-        raise HTTPException(status_code=403, detail="Not authorized")
+async def get_login_logs(current_user: Annotated[dict, Depends(get_master_user)]):
     logs = await db.login_logs.find({}, {"_id": 0}).sort("timestamp", -1).limit(500).to_list(500)
     
     # Enrich with current active status
@@ -779,6 +910,49 @@ async def clear_login_logs(current_user: Annotated[dict, Depends(get_current_use
     await log_activity(username, "master", "security", "Membersihkan seluruh histori login", user_id=current_user.get("user_id"))
     return {"message": "Histori login berhasil dibersihkan"}
 
+@api_router.get("/master/blocked-ips")
+async def get_blocked_ips(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    ips = await db.blocked_ips.find({}, {"_id": 0}).to_list(100)
+    return ips
+
+@api_router.post("/master/blocked-ips")
+async def block_ip(data: dict, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    ip = data.get("ip_address")
+    reason = data.get("reason", "Diblokir manual oleh Master")
+    
+    if not ip:
+        raise HTTPException(status_code=400, detail="IP address required")
+        
+    await db.blocked_ips.update_one(
+        {"ip_address": ip},
+        {"$set": {
+            "id": str(uuid.uuid4()),
+            "ip_address": ip,
+            "reason": reason,
+            "blocked_at": datetime.now(timezone.utc).isoformat()
+        }},
+        upsert=True
+    )
+    await log_activity(current_user.get("username"), "master", "security", f"Memblokir IP: {ip}", user_id=current_user.get("user_id"))
+    return {"message": f"IP {ip} berhasil diblokir"}
+
+@api_router.delete("/master/blocked-ips/{ip}")
+async def unblock_ip(ip: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    result = await db.blocked_ips.delete_one({"ip_address": ip})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="IP tidak ditemukan dalam daftar blokir")
+        
+    await log_activity(current_user.get("username"), "master", "security", f"Membuka blokir IP: {ip}", user_id=current_user.get("user_id"))
+    return {"message": f"IP {ip} berhasil dibuka blokirnya"}
+
 @api_router.delete("/master/activity-logs")
 async def clear_activity_logs(current_user: Annotated[dict, Depends(get_current_user)]):
     if current_user.get("role") != "master":
@@ -796,9 +970,7 @@ async def get_school_profile():
     return profile
 
 @api_router.put("/admin/school-profile")
-async def update_school_profile(profile_data: SchoolProfileUpdate, current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
+async def update_school_profile(profile_data: SchoolProfileUpdate, current_user: Annotated[dict, Depends(get_admin_user)]):
     
     doc = profile_data.model_dump()
     doc['updated_at'] = datetime.now(timezone.utc).isoformat()
@@ -807,12 +979,12 @@ async def update_school_profile(profile_data: SchoolProfileUpdate, current_user:
 
 # Student Routes (Admin only)
 @api_router.get("/students")
-async def get_students():
+async def get_students(current_user: Annotated[dict, Depends(get_admin_user)]):
     students = await db.students.find({}, {"_id": 0}).to_list(1000)
     return students
 
 @api_router.post("/students")
-async def create_student(student: StudentCreate):
+async def create_student(student: StudentCreate, current_user: Annotated[dict, Depends(get_admin_user)]):
     # Check if username or NIS already exists
     exists = await db.students.find_one({"$or": [{"username": student.username}, {"nis": student.nis}]})
     if exists:
@@ -834,7 +1006,7 @@ async def create_student(student: StudentCreate):
     return new_student
 
 @api_router.put("/students/{student_id}")
-async def update_student(student_id: str, student: StudentCreate):
+async def update_student(student_id: str, student: StudentCreate, current_user: Annotated[dict, Depends(get_admin_user)]):
     # Check if student exists
     exists = await db.students.find_one({"id": student_id})
     if not exists:
@@ -857,7 +1029,7 @@ async def update_student(student_id: str, student: StudentCreate):
     return {"message": "Siswa berhasil diupdate"}
 
 @api_router.delete("/students/{student_id}")
-async def delete_student(student_id: str):
+async def delete_student(student_id: str, current_user: Annotated[dict, Depends(get_admin_user)]):
     exists = await db.students.find_one({"id": student_id})
     result = await db.students.delete_one({"id": student_id})
     if result.deleted_count == 0:
@@ -867,12 +1039,12 @@ async def delete_student(student_id: str):
 
 # Class Routes
 @api_router.get("/classes")
-async def get_classes():
+async def get_classes(current_user: Annotated[dict, Depends(get_admin_user)]):
     classes = await db.classes.find({}, {"_id": 0}).to_list(1000)
     return classes
 
 @api_router.post("/classes")
-async def create_class(class_data: ClassCreate):
+async def create_class(class_data: ClassCreate, current_user: Annotated[dict, Depends(get_admin_user)]):
     new_class = Class(
         nama_kelas=class_data.nama_kelas,
         nominal_spp=class_data.nominal_spp
@@ -884,7 +1056,7 @@ async def create_class(class_data: ClassCreate):
 
 # Bill Routes
 @api_router.get("/bills")
-async def get_bills(status: Optional[str] = None, id_siswa: Optional[str] = None):
+async def get_bills(status: Optional[str] = None, id_siswa: Optional[str] = None, current_user: Annotated[dict, Depends(get_admin_user)] = None):
     query = {}
     if status:
         query["status"] = status
@@ -902,7 +1074,7 @@ async def get_bills(status: Optional[str] = None, id_siswa: Optional[str] = None
     return bills
 
 @api_router.post("/bills/generate")
-async def generate_bills(bill_gen: BillGenerate):
+async def generate_bills(bill_gen: BillGenerate, current_user: Annotated[dict, Depends(get_admin_user)]):
     # Get all students
     students = await db.students.find({}, {"_id": 0}).to_list(1000)
     
@@ -935,7 +1107,7 @@ async def generate_bills(bill_gen: BillGenerate):
     return {"message": f"Berhasil generate {generated_count} tagihan"}
 
 @api_router.put("/bills/{bill_id}/confirm")
-async def confirm_bill(bill_id: str, confirm: BillConfirm):
+async def confirm_bill(bill_id: str, confirm: BillConfirm, current_user: Annotated[dict, Depends(get_admin_user)]):
     # Dapatkan data tagihan
     bill = await db.bills.find_one({"id": bill_id}, {"_id": 0})
     if not bill:
@@ -988,7 +1160,7 @@ async def confirm_bill(bill_id: str, confirm: BillConfirm):
 
 # Payment Routes
 @api_router.get("/payments")
-async def get_payments(id_siswa: Optional[str] = None):
+async def get_payments(id_siswa: Optional[str] = None, current_user: Annotated[dict, Depends(get_admin_user)] = None):
     query = {}
     if id_siswa:
         query["id_siswa"] = id_siswa
@@ -1055,11 +1227,17 @@ async def create_payment(payment_data: PaymentCreate):
 
 # Upload receipt for a payment (student uploads PDF)
 @api_router.post("/payments/{payment_id}/upload_receipt")
-async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
+async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...), current_user: Annotated[dict, Depends(get_current_user)] = None):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
     # Validate payment exists
     payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
+
+    # IDOR Check: Ensure student only uploads for their own payments
+    if current_user.get("role") == "siswa" and current_user.get("user_id") != payment.get("id_siswa"):
+        raise HTTPException(status_code=403, detail="Cannot upload receipt for another student's payment")
 
     # 1. Cek Tipe Konten (Izinkan PDF dan Gambar)
     allowed_types = ["application/pdf", "image/jpeg", "image/png", "image/jpg"]
@@ -1074,16 +1252,27 @@ async def upload_payment_receipt(payment_id: str, file: UploadFile = File(...)):
     # Koreksi untuk .jpe -> .jpg agar lebih umum
     if ext == ".jpe": ext = ".jpg"
 
-    filename = f"receipt_{payment_id}{ext}"
-    file_path = receipts_dir / filename
-
-    with open(file_path, 'wb') as f:
+    # 3. Upload ke Google Drive
+    try:
+        import uuid
+        safe_payment_id = "".join(c for c in payment_id if c.isalnum() or c in "-_")
+        filename = f"receipt_{safe_payment_id}_{uuid.uuid4().hex}{ext}"
+        
         content = await file.read()
-        f.write(content)
-
-    # Update payment record
-    await db.payments.update_one({"id": payment_id}, {"$set": {"receipt_path": str(file_path), "status": "menunggu_konfirmasi"}})
-    await db.bills.update_one({"id": payment['id_tagihan']}, {"$set": {"status": "menunggu_konfirmasi"}})
+        file_id, web_link = upload_to_drive(content, filename, file.content_type)
+        
+        # Update payment record dengan link Google Drive
+        await db.payments.update_one(
+            {"id": payment_id}, 
+            {"$set": {
+                "receipt_path": web_link, 
+                "drive_file_id": file_id,
+                "status": "menunggu_konfirmasi"
+            }}
+        )
+        await db.bills.update_one({"id": payment['id_tagihan']}, {"$set": {"status": "menunggu_konfirmasi"}})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal mengunggah ke Google Drive: {str(e)}")
     
     student = await db.students.find_one({"id": payment['id_siswa']})
     await log_activity(student['username'] if student else "unknown", "siswa", "payment", f"Mengunggah bukti pembayaran untuk tagihan {payment['id_tagihan']}")
@@ -1108,19 +1297,37 @@ async def get_uploaded_receipt(payment_id: str, user_payload: Annotated[dict, De
     if not receipt_path:
         raise HTTPException(status_code=404, detail="Receipt not uploaded")
 
+    drive_file_id = payment.get('drive_file_id')
+    if drive_file_id:
+        try:
+            service = get_drive_service()
+            
+            # Ambil metadata file untuk tipe konten dan nama
+            file_meta = service.files().get(fileId=drive_file_id, fields='mimeType, name', supportsAllDrives=True).execute()
+            
+            # Ambil konten file
+            request = service.files().get_media(fileId=drive_file_id)
+            file_content = request.execute()
+            
+            return StreamingResponse(
+                BytesIO(file_content), 
+                media_type=file_meta.get('mimeType'), 
+                headers={"Content-Disposition": f"inline; filename={file_meta.get('name')}"}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Gagal mengambil file dari Google Drive: {str(e)}")
+
+    # Fallback ke sistem file lokal jika bukan dari Drive
     file_path = Path(receipt_path)
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Receipt file not found on server")
+        raise HTTPException(status_code=404, detail="File tidak ditemukan di server maupun Drive")
 
-    # Deteksi media type otomatis (PDF/JPG/PNG)
     media_type, _ = mimetypes.guess_type(file_path)
     return FileResponse(path=str(file_path), media_type=media_type, filename=file_path.name)
 
 # Dashboard Stats
 @api_router.get("/dashboard/stats")
-async def get_dashboard_stats(current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") not in ["admin", "kepsek", "master"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
+async def get_dashboard_stats(current_user: Annotated[dict, Depends(get_admin_user)]):
     # Total students
     total_students = await db.students.count_documents({})
     
@@ -1156,9 +1363,7 @@ async def get_dashboard_stats(current_user: Annotated[dict, Depends(get_current_
     }
 
 @api_router.get("/dashboard/arrears-detail")
-async def get_arrears_detail(current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") not in ["admin", "kepsek", "master"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
+async def get_arrears_detail(current_user: Annotated[dict, Depends(get_admin_user)]):
     
     # Fetch all unpaid bills
     unpaid_bills = await db.bills.find({"status": "belum"}, {"_id": 0}).to_list(5000)
@@ -1198,9 +1403,7 @@ async def get_arrears_detail(current_user: Annotated[dict, Depends(get_current_u
     return result
     
 @api_router.get("/reports/annual")
-async def get_annual_report(current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") not in ["admin", "kepsek", "master"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
+async def get_annual_report(current_user: Annotated[dict, Depends(get_admin_user)]):
     # Ambil semua pembayaran yang statusnya diterima
     payments = await db.payments.find({"status": "diterima"}, {"_id": 0}).to_list(1000)
     annual_data = {}
@@ -1234,9 +1437,7 @@ async def get_annual_report(current_user: Annotated[dict, Depends(get_current_us
     }
 # Reports
 @api_router.get("/reports/daily")
-async def get_daily_report(current_user: Annotated[dict, Depends(get_current_user)]):
-    if current_user.get("role") not in ["admin", "kepsek", "master"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
+async def get_daily_report(current_user: Annotated[dict, Depends(get_admin_user)]):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     payments = await db.payments.find({}, {"_id": 0}).to_list(1000)
     daily_payments = [p for p in payments if isinstance(p["tanggal_bayar"], str) and p["tanggal_bayar"].startswith(today)]
@@ -1255,9 +1456,7 @@ async def get_daily_report(current_user: Annotated[dict, Depends(get_current_use
     return {"total": total, "payments": daily_payments}
 
 @api_router.get("/reports/monthly")
-async def get_monthly_report(bulan: str, tahun: int, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_current_user)] = None):
-    if current_user.get("role") not in ["admin", "kepsek", "master"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
+async def get_monthly_report(bulan: str, tahun: int, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_admin_user)] = None):
     
     # Filter bills for the summary
     bills_query = {"bulan": bulan, "tahun": tahun}
@@ -2015,20 +2214,27 @@ async def export_class_recap_xlsx(current_user: Annotated[dict, Depends(get_curr
 
 # WhatsApp Mock
 @api_router.post("/whatsapp/send")
-async def send_whatsapp(nomor: str, pesan: str):
+async def send_whatsapp(nomor: str, pesan: str, current_user: Annotated[dict, Depends(get_admin_user)]):
     # Mock WhatsApp sending
     logging.info(f"[MOCK WA] Pesan: {pesan} | Kirim ke: {nomor}")
     return {"status": "success", "message": "Pesan WhatsApp berhasil dikirim (mock)"}
 
 # Student Portal Routes
 @api_router.get("/student/profile/{student_id}")
-async def get_student_profile(student_id: str):
+async def get_student_profile(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    # IDOR Check
+    role = current_user.get("role")
+    if role not in ["admin", "kepsek", "master"] and current_user.get("user_id") != student_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
     student = await db.students.find_one({"id": student_id}, {"_id": 0})
     if not student:
         raise HTTPException(status_code=404, detail="Siswa tidak ditemukan")
     return student
 @api_router.put("/student/change-password/{student_id}")
-async def change_student_password(student_id: str, request: ChangePasswordRequest):
+async def change_student_password(student_id: str, request: ChangePasswordRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    # Only the student themselves can change their own password here
+    if current_user.get("user_id") != student_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
     # 1. Cari siswa
     student = await db.students.find_one({"id": student_id})
     if not student:
@@ -2049,12 +2255,20 @@ async def change_student_password(student_id: str, request: ChangePasswordReques
     return {"message": "Password berhasil diubah"}
 
 @api_router.get("/student/bills/{student_id}")
-async def get_student_bills(student_id: str):
+async def get_student_bills(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    # IDOR Check
+    role = current_user.get("role")
+    if role not in ["admin", "kepsek", "master"] and current_user.get("user_id") != student_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
     bills = await db.bills.find({"id_siswa": student_id}, {"_id": 0}).to_list(1000)
     return bills
 
 @api_router.get("/student/payments/{student_id}")
-async def get_student_payments(student_id: str):
+async def get_student_payments(student_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    # IDOR Check
+    role = current_user.get("role")
+    if role not in ["admin", "kepsek", "master"] and current_user.get("user_id") != student_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
     payments = await db.payments.find({"id_siswa": student_id}, {"_id": 0}).to_list(1000)
     
     # Enrich with bill data
@@ -2095,25 +2309,49 @@ async def upload_profile_photo(file: UploadFile = File(...), current_user: Annot
         raise HTTPException(status_code=400, detail="Only JPG and PNG are allowed")
         
     ext = mimetypes.guess_extension(file.content_type) or ".jpg"
-    filename = f"profile_{current_user['user_id']}{ext}"
+    import uuid
+    filename = f"profile_{current_user['user_id']}_{uuid.uuid4().hex}{ext}"
     file_path = profiles_dir / filename
     
-    # Save the file
-    with open(file_path, 'wb') as f:
+    # Save the file to Google Drive
+    try:
         content = await file.read()
-        f.write(content)
+        file_id, _ = upload_to_drive(content, filename, file.content_type)
         
-    photo_url = f"/uploads/profiles/{filename}"
-    
-    # Update DB
-    if current_user['role'] == "siswa":
-        await db.students.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url}})
-    else:
-        await db.users.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url}})
+        # Simpan URL proxy backend kita sendiri, bukan link Drive langsung
+        photo_url = f"/api/profile/photo/{file_id}"
+        
+        # Update DB
+        if current_user['role'] == "siswa":
+            await db.students.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url, "drive_photo_id": file_id}})
+        else:
+            await db.users.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url, "drive_photo_id": file_id}})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal mengunggah foto ke Google Drive: {str(e)}")
     
     await log_activity(current_user['username'], current_user['role'], "profile", "Mengunggah foto profil")
         
     return {"message": "Photo updated", "url": photo_url}
+
+# Proxy endpoint untuk menampilkan foto profil dari Google Drive
+@api_router.get("/profile/photo/{file_id}")
+async def get_profile_photo_proxy(file_id: str):
+    try:
+        service = get_drive_service()
+        
+        # Ambil metadata file untuk tipe konten
+        file_meta = service.files().get(fileId=file_id, fields='mimeType', supportsAllDrives=True).execute()
+        
+        # Ambil konten file
+        request = service.files().get_media(fileId=file_id)
+        file_content = request.execute()
+        
+        return StreamingResponse(
+            BytesIO(file_content), 
+            media_type=file_meta.get('mimeType')
+        )
+    except Exception as e:
+        raise HTTPException(status_code=404, detail="Foto tidak ditemukan di Drive")
 
 @api_router.put("/profile/change-password")
 async def change_my_password(request: ChangePasswordRequest, current_user: Annotated[dict, Depends(get_current_user)]):

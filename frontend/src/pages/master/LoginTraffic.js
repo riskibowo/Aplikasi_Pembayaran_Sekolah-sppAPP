@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 const LoginTraffic = () => {
     const [logs, setLogs] = useState([]);
     const [activityLogs, setActivityLogs] = useState([]);
+    const [blockedIps, setBlockedIps] = useState([]);
     const [loading, setLoading] = useState(true);
     const { token } = useContext(AuthContext);
     const pollingInterval = useRef(null);
@@ -32,12 +33,14 @@ const LoginTraffic = () => {
     const fetchAllLogs = async (showLoading = true) => {
         if (showLoading) setLoading(true);
         try {
-            const [loginLogsRes, activityLogsRes] = await Promise.all([
+            const [loginLogsRes, activityLogsRes, blockedIpsRes] = await Promise.all([
                 axios.get(`${API}/master/login-logs`, { headers: { Authorization: `Bearer ${token}` } }),
-                axios.get(`${API}/master/activity-logs`, { headers: { Authorization: `Bearer ${token}` } })
+                axios.get(`${API}/master/activity-logs`, { headers: { Authorization: `Bearer ${token}` } }),
+                axios.get(`${API}/master/blocked-ips`, { headers: { Authorization: `Bearer ${token}` } })
             ]);
             setLogs(loginLogsRes.data);
             setActivityLogs(activityLogsRes.data);
+            setBlockedIps(blockedIpsRes.data);
         } catch (error) {
             console.error('Error fetching logs:', error);
             if (showLoading) toast.error('Gagal memuat log aktivitas');
@@ -94,6 +97,31 @@ const LoginTraffic = () => {
             fetchAllLogs(false);
         } catch (error) {
             toast.error('Gagal membersihkan log aktivitas');
+        }
+    };
+
+    const handleBlockIp = async (ip, reason = 'Spam login detected by Master') => {
+        if (!window.confirm(`Blokir IP ${ip} secara permanen? Penyerang tidak akan bisa mengakses sistem sama sekali.`)) return;
+        try {
+            await axios.post(`${API}/master/blocked-ips`, { ip_address: ip, reason }, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            toast.success(`IP ${ip} berhasil diblokir`);
+            fetchAllLogs(false);
+        } catch (error) {
+            toast.error('Gagal memblokir IP');
+        }
+    };
+
+    const handleUnblockIp = async (ip) => {
+        try {
+            await axios.delete(`${API}/master/blocked-ips/${ip}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            toast.success(`Blokir IP ${ip} dibuka`);
+            fetchAllLogs(false);
+        } catch (error) {
+            toast.error('Gagal membuka blokir IP');
         }
     };
 
@@ -352,6 +380,7 @@ const LoginTraffic = () => {
                                         <TableRow>
                                             <TableHead className="text-xs">Waktu</TableHead>
                                             <TableHead className="text-xs">User</TableHead>
+                                            <TableHead className="text-xs">IP Address</TableHead>
                                             <TableHead className="text-xs">Status</TableHead>
                                             <TableHead className="text-xs text-right">Action</TableHead>
                                         </TableRow>
@@ -367,6 +396,14 @@ const LoginTraffic = () => {
                                                     </div>
                                                 </TableCell>
                                                 <TableCell>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[10px] font-mono">{log.ip_address}</span>
+                                                        {blockedIps.find(b => b.ip_address === log.ip_address) && (
+                                                            <Badge className="bg-red-500 text-white border-0 text-[8px] py-0 w-fit">BLOCKED</Badge>
+                                                        )}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
                                                     {log.status === 'success' ? (
                                                         <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 border-0 text-[9px] py-0">Success</Badge>
                                                     ) : (
@@ -374,7 +411,27 @@ const LoginTraffic = () => {
                                                     )}
                                                     {log.is_suspicious && <div className="text-[8px] text-red-600 font-bold mt-1">SUSPICIOUS IP</div>}
                                                 </TableCell>
-                                                <TableCell className="text-right">
+                                                <TableCell className="text-right flex justify-end space-x-1">
+                                                    {/* Block IP Button */}
+                                                    {!blockedIps.find(b => b.ip_address === log.ip_address) ? (
+                                                        <button
+                                                            onClick={() => handleBlockIp(log.ip_address)}
+                                                            className="p-1.5 bg-gray-100 text-gray-700 rounded-full hover:bg-black hover:text-white transition-all shadow-sm"
+                                                            title="Block IP Address"
+                                                        >
+                                                            <Monitor className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => handleUnblockIp(log.ip_address)}
+                                                            className="p-1.5 bg-red-100 text-red-700 rounded-full hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+                                                            title="Unblock IP Address"
+                                                        >
+                                                            <CheckCircle className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    )}
+
+                                                    {/* Ban User Button */}
                                                     {log.user_id && log.role !== 'master' && (
                                                         log.is_user_active ? (
                                                             <button
@@ -403,6 +460,56 @@ const LoginTraffic = () => {
                         </CardContent>
                     </Card>
                 </div>
+
+                {/* Blocked IPs Management Section */}
+                <Card className="border-0 shadow-lg border-t-4 border-black mt-6">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-lg flex items-center space-x-2">
+                            <ShieldAlert className="w-5 h-5 text-red-600" />
+                            <span>Manajemen IP Diblokir ({blockedIps.length})</span>
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="overflow-x-auto">
+                            <Table>
+                                <TableHeader className="bg-gray-50">
+                                    <TableRow>
+                                        <TableHead className="text-xs">IP Address</TableHead>
+                                        <TableHead className="text-xs">Alasan</TableHead>
+                                        <TableHead className="text-xs">Waktu Blokir</TableHead>
+                                        <TableHead className="text-xs text-right">Action</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {blockedIps.map((b) => (
+                                        <TableRow key={b.id}>
+                                            <TableCell className="font-mono font-bold text-red-600">{b.ip_address}</TableCell>
+                                            <TableCell className="text-xs">{b.reason}</TableCell>
+                                            <TableCell className="text-[10px] font-mono">{formatTimestamp(b.blocked_at)}</TableCell>
+                                            <TableCell className="text-right">
+                                                <Button 
+                                                    variant="outline" 
+                                                    size="sm" 
+                                                    className="h-7 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+                                                    onClick={() => handleUnblockIp(b.ip_address)}
+                                                >
+                                                    Unblock
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                    {blockedIps.length === 0 && (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="text-center py-10 text-gray-400 italic">
+                                                Tidak ada IP yang sedang diblokir.
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
         </Layout>
     );

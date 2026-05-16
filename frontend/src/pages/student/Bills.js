@@ -103,147 +103,219 @@ const StudentBills = () => {
     <Layout>
       <div data-testid="student-bills-page" className="space-y-6">
         <div>
-          <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{fontFamily: 'Space Grotesk, sans-serif'}}>Tagihan SPP</h1>
-          <p className="text-gray-600">Daftar tagihan pembayaran SPP Anda</p>
+          <h1 className="text-2xl md:text-4xl font-bold text-blue-900 mb-2" style={{fontFamily: 'Space Grotesk, sans-serif'}}>Tagihan SPP</h1>
+          <p className="text-sm md:text-base text-gray-600">Daftar tagihan pembayaran SPP Anda</p>
         </div>
 
        {/* Unpaid Bills */}
         {unpaidBills.length > 0 && (
-          <Card className="border-0 shadow-lg border-l-4 border-l-red-500">
+          <Card className="border-0 shadow-lg border-l-4 border-l-red-500 overflow-hidden">
             <CardHeader>
-              <CardTitle className="text-red-700 flex items-center space-x-2">
+              <CardTitle className="text-red-700 flex items-center space-x-2 text-lg">
                 <XCircle className="w-5 h-5" />
                 <span>Tagihan Belum Lunas ({unpaidBills.length})</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Bulan</TableHead>
-                    <TableHead>Tahun</TableHead>
-                    <TableHead>Jumlah</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Aksi</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {unpaidBills.map((bill) => (
-                    <TableRow key={bill.id} data-testid={`unpaid-bill-${bill.id}`}>
-                      <TableCell className="font-medium">{bill.bulan}</TableCell>
-                      <TableCell>{bill.tahun}</TableCell>
-                      <TableCell className="font-semibold text-red-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
-                      <TableCell>
-                        <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-medium">
-                          BELUM LUNAS
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          data-testid={`pay-bill-${bill.id}`}
-                          size="sm"
-                          onClick={() => handlePay(bill)}
-                          className="bg-gradient-to-r from-blue-900 to-indigo-700 hover:from-blue-800 hover:to-indigo-600"
-                        >
-                          <DollarSign className="w-4 h-4 mr-1" />
-                          Bayar Sekarang
-                        </Button>
-                      </TableCell>
+            <CardContent className="px-2 md:px-6">
+              {/* Desktop Table */}
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Bulan</TableHead>
+                      <TableHead>Tahun</TableHead>
+                      <TableHead>Jumlah</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Aksi</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {unpaidBills.map((bill) => (
+                      <TableRow key={bill.id} data-testid={`unpaid-bill-${bill.id}`}>
+                        <TableCell className="font-medium">{bill.bulan}</TableCell>
+                        <TableCell>{bill.tahun}</TableCell>
+                        <TableCell className="font-semibold text-red-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
+                        <TableCell>
+                          <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-medium">
+                            BELUM LUNAS
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            data-testid={`pay-bill-${bill.id}`}
+                            size="sm"
+                            onClick={() => handlePay(bill)}
+                            className="bg-gradient-to-r from-blue-900 to-indigo-700 hover:from-blue-800 hover:to-indigo-600"
+                          >
+                            <DollarSign className="w-4 h-4 mr-1" />
+                            Bayar Sekarang
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile Card List */}
+              <div className="md:hidden space-y-3">
+                {unpaidBills.map((bill) => (
+                  <div key={bill.id} className="p-4 bg-red-50/50 rounded-xl border border-red-100 space-y-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-bold text-gray-900">{bill.bulan} {bill.tahun}</p>
+                        <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">SPP Bulanan</p>
+                      </div>
+                      <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[10px] font-bold">
+                        BELUM LUNAS
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center pt-2 border-t border-red-100">
+                      <span className="text-sm text-gray-600">Total Tagihan:</span>
+                      <span className="text-lg font-extrabold text-red-700">Rp {bill.jumlah.toLocaleString('id-ID')}</span>
+                    </div>
+                    <Button
+                      data-testid={`pay-bill-${bill.id}-mobile`}
+                      onClick={() => handlePay(bill)}
+                      className="w-full bg-blue-900 hover:bg-blue-800 shadow-md font-bold py-5 rounded-xl"
+                    >
+                      <DollarSign className="w-4 h-4 mr-2" />
+                      Bayar Sekarang
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
         )}
 
         {/* Pending Bills */}
         {pendingBills.length > 0 && (
-          <Card className="border-0 shadow-lg border-l-4 border-l-purple-500">
+          <Card className="border-0 shadow-lg border-l-4 border-l-purple-500 overflow-hidden">
             <CardHeader>
-              <CardTitle className="text-purple-700 flex items-center space-x-2">
+              <CardTitle className="text-purple-700 flex items-center space-x-2 text-lg">
                 <History className="w-5 h-5" />
                 <span>Menunggu Konfirmasi ({pendingBills.length})</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Bulan</TableHead>
-                    <TableHead>Tahun</TableHead>
-                    <TableHead>Jumlah</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Aksi</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pendingBills.map((bill) => (
-                    <TableRow key={bill.id} data-testid={`pending-bill-${bill.id}`}>
-                      <TableCell className="font-medium">{bill.bulan}</TableCell>
-                      <TableCell>{bill.tahun}</TableCell>
-                      <TableCell className="font-semibold text-gray-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
-                      <TableCell>
-                        <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
-                          MENUNGGU KONFIRMASI
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          disabled
-                          className="bg-gray-300"
-                        >
-                          Menunggu...
-                        </Button>
-                      </TableCell>
+            <CardContent className="px-2 md:px-6">
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Bulan</TableHead>
+                      <TableHead>Tahun</TableHead>
+                      <TableHead>Jumlah</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Aksi</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingBills.map((bill) => (
+                      <TableRow key={bill.id} data-testid={`pending-bill-${bill.id}`}>
+                        <TableCell className="font-medium">{bill.bulan}</TableCell>
+                        <TableCell>{bill.tahun}</TableCell>
+                        <TableCell className="font-semibold text-gray-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
+                        <TableCell>
+                          <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
+                            MENUNGGU KONFIRMASI
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" disabled className="bg-gray-300">Menunggu...</Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile Card List */}
+              <div className="md:hidden space-y-3">
+                {pendingBills.map((bill) => (
+                  <div key={bill.id} className="p-4 bg-purple-50/50 rounded-xl border border-purple-100 space-y-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-bold text-gray-900">{bill.bulan} {bill.tahun}</p>
+                        <p className="text-xs text-gray-500 font-medium">SPP Bulanan</p>
+                      </div>
+                      <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-[10px] font-bold uppercase">
+                        PENDING
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">Jumlah:</span>
+                      <span className="text-lg font-bold text-purple-700 text-right truncate max-w-[150px]">Rp {bill.jumlah.toLocaleString('id-ID')}</span>
+                    </div>
+                    <Button disabled className="w-full bg-gray-200 text-gray-500 rounded-xl">
+                      Menunggu Verifikasi
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
         )}
 
         {/* Paid Bills */}
-        <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
+        <Card className="border-0 shadow-lg border-l-4 border-l-green-500 overflow-hidden">
           <CardHeader>
-            <CardTitle className="text-green-700 flex items-center space-x-2">
+            <CardTitle className="text-green-700 flex items-center space-x-2 text-lg">
               <CheckCircle className="w-5 h-5" />
               <span>Tagihan Lunas ({paidBills.length})</span>
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-2 md:px-6">
             {paidBills.length === 0 ? (
               <p className="text-center py-8 text-gray-500">Belum ada tagihan yang lunas</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Bulan</TableHead>
-                    <TableHead>Tahun</TableHead>
-                    <TableHead>Jumlah</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <>
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Bulan</TableHead>
+                        <TableHead>Tahun</TableHead>
+                        <TableHead>Jumlah</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paidBills.map((bill) => (
+                        <TableRow key={bill.id}>
+                          <TableCell className="font-medium">{bill.bulan}</TableCell>
+                          <TableCell>{bill.tahun}</TableCell>
+                          <TableCell className="font-semibold text-green-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
+                          <TableCell>
+                            <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">
+                              LUNAS
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Mobile Card List */}
+                <div className="md:hidden space-y-3">
                   {paidBills.map((bill) => (
-                    <TableRow key={bill.id}>
-                      <TableCell className="font-medium">{bill.bulan}</TableCell>
-                      <TableCell>{bill.tahun}</TableCell>
-                      <TableCell className="font-semibold text-green-700">Rp {bill.jumlah.toLocaleString('id-ID')}</TableCell>
-                      <TableCell>
-                        <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">
-                          LUNAS
-                        </span>
-                      </TableCell>
-                    </TableRow>
+                    <div key={bill.id} className="p-4 bg-green-50/50 rounded-xl border border-green-100 flex justify-between items-center">
+                      <div>
+                        <p className="font-bold text-gray-900">{bill.bulan} {bill.tahun}</p>
+                        <p className="text-lg font-bold text-green-700">Rp {bill.jumlah.toLocaleString('id-ID')}</p>
+                      </div>
+                      <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">
+                        LUNAS
+                      </span>
+                    </div>
                   ))}
-                </TableBody>
-              </Table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
+
       </div>
 
       {/* Payment Confirmation Dialog */}

@@ -113,15 +113,15 @@ const UserProfile = () => {
 
   return (
     <Layout>
-      <div data-testid="profile-page" className="space-y-6">
-        <div className="flex justify-between items-center">
+      <div data-testid="profile-page" className="space-y-6 pb-20 md:pb-6">
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
           <div>
-            <h1 className="text-4xl font-bold text-blue-900 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Profil Saya</h1>
-            <p className="text-gray-600">Informasi data pribadi dan pengaturan akun</p>
+            <h1 className="text-2xl md:text-4xl font-bold text-blue-900 mb-2" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Profil Saya</h1>
+            <p className="text-sm md:text-base text-gray-600">Informasi data pribadi dan pengaturan akun</p>
           </div>
           <Button
             onClick={() => setShowPasswordDialog(true)}
-            className="bg-blue-900 hover:bg-blue-800"
+            className="bg-blue-900 hover:bg-blue-800 w-full md:w-auto py-6 md:py-2 rounded-xl md:rounded-md font-bold shadow-lg md:shadow-none"
           >
             <Lock className="w-4 h-4 mr-2" />
             Ganti Password
