@@ -202,6 +202,11 @@ async def get_admin_user(current_user: Annotated[dict, Depends(get_current_user)
         raise HTTPException(status_code=403, detail="Akses ditolak: Hanya Admin yang diizinkan")
     return current_user
 
+async def get_staff_user(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") not in ["admin", "master", "kepsek"]:
+        raise HTTPException(status_code=403, detail="Akses ditolak: Hanya Admin, Master, atau Kepala Sekolah yang diizinkan")
+    return current_user
+
 async def get_master_user(current_user: Annotated[dict, Depends(get_current_user)]):
     if current_user.get("role") != "master":
         raise HTTPException(status_code=403, detail="Akses ditolak: Hanya Master Administrator yang diizinkan")
@@ -979,7 +984,7 @@ async def update_school_profile(profile_data: SchoolProfileUpdate, current_user:
 
 # Student Routes (Admin only)
 @api_router.get("/students")
-async def get_students(current_user: Annotated[dict, Depends(get_admin_user)]):
+async def get_students(current_user: Annotated[dict, Depends(get_staff_user)]):
     students = await db.students.find({}, {"_id": 0}).to_list(1000)
     return students
 
@@ -1039,7 +1044,7 @@ async def delete_student(student_id: str, current_user: Annotated[dict, Depends(
 
 # Class Routes
 @api_router.get("/classes")
-async def get_classes(current_user: Annotated[dict, Depends(get_admin_user)]):
+async def get_classes(current_user: Annotated[dict, Depends(get_staff_user)]):
     classes = await db.classes.find({}, {"_id": 0}).to_list(1000)
     return classes
 
@@ -1056,7 +1061,7 @@ async def create_class(class_data: ClassCreate, current_user: Annotated[dict, De
 
 # Bill Routes
 @api_router.get("/bills")
-async def get_bills(status: Optional[str] = None, id_siswa: Optional[str] = None, current_user: Annotated[dict, Depends(get_admin_user)] = None):
+async def get_bills(status: Optional[str] = None, id_siswa: Optional[str] = None, current_user: Annotated[dict, Depends(get_staff_user)] = None):
     query = {}
     if status:
         query["status"] = status
@@ -1160,7 +1165,7 @@ async def confirm_bill(bill_id: str, confirm: BillConfirm, current_user: Annotat
 
 # Payment Routes
 @api_router.get("/payments")
-async def get_payments(id_siswa: Optional[str] = None, current_user: Annotated[dict, Depends(get_admin_user)] = None):
+async def get_payments(id_siswa: Optional[str] = None, current_user: Annotated[dict, Depends(get_staff_user)] = None):
     query = {}
     if id_siswa:
         query["id_siswa"] = id_siswa
@@ -1290,7 +1295,7 @@ async def get_uploaded_receipt(payment_id: str, user_payload: Annotated[dict, De
 
     role = user_payload.get("role")
     user_id = user_payload.get("user_id")
-    if role != "admin" and user_id != payment.get("id_siswa"):
+    if role not in ["admin", "master", "kepsek"] and user_id != payment.get("id_siswa"):
         raise HTTPException(status_code=403, detail="Not authorized to access this receipt")
 
     receipt_path = payment.get('receipt_path')
@@ -1327,7 +1332,7 @@ async def get_uploaded_receipt(payment_id: str, user_payload: Annotated[dict, De
 
 # Dashboard Stats
 @api_router.get("/dashboard/stats")
-async def get_dashboard_stats(current_user: Annotated[dict, Depends(get_admin_user)]):
+async def get_dashboard_stats(current_user: Annotated[dict, Depends(get_staff_user)]):
     # Total students
     total_students = await db.students.count_documents({})
     
@@ -1363,7 +1368,7 @@ async def get_dashboard_stats(current_user: Annotated[dict, Depends(get_admin_us
     }
 
 @api_router.get("/dashboard/arrears-detail")
-async def get_arrears_detail(current_user: Annotated[dict, Depends(get_admin_user)]):
+async def get_arrears_detail(current_user: Annotated[dict, Depends(get_staff_user)]):
     
     # Fetch all unpaid bills
     unpaid_bills = await db.bills.find({"status": "belum"}, {"_id": 0}).to_list(5000)
@@ -1403,7 +1408,7 @@ async def get_arrears_detail(current_user: Annotated[dict, Depends(get_admin_use
     return result
     
 @api_router.get("/reports/annual")
-async def get_annual_report(current_user: Annotated[dict, Depends(get_admin_user)]):
+async def get_annual_report(current_user: Annotated[dict, Depends(get_staff_user)]):
     # Ambil semua pembayaran yang statusnya diterima
     payments = await db.payments.find({"status": "diterima"}, {"_id": 0}).to_list(1000)
     annual_data = {}
@@ -1437,7 +1442,7 @@ async def get_annual_report(current_user: Annotated[dict, Depends(get_admin_user
     }
 # Reports
 @api_router.get("/reports/daily")
-async def get_daily_report(current_user: Annotated[dict, Depends(get_admin_user)]):
+async def get_daily_report(current_user: Annotated[dict, Depends(get_staff_user)]):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     payments = await db.payments.find({}, {"_id": 0}).to_list(1000)
     daily_payments = [p for p in payments if isinstance(p["tanggal_bayar"], str) and p["tanggal_bayar"].startswith(today)]
@@ -1456,7 +1461,7 @@ async def get_daily_report(current_user: Annotated[dict, Depends(get_admin_user)
     return {"total": total, "payments": daily_payments}
 
 @api_router.get("/reports/monthly")
-async def get_monthly_report(bulan: str, tahun: int, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_admin_user)] = None):
+async def get_monthly_report(bulan: str, tahun: int, status: Optional[str] = None, current_user: Annotated[dict, Depends(get_staff_user)] = None):
     
     # Filter bills for the summary
     bills_query = {"bulan": bulan, "tahun": tahun}
@@ -2069,14 +2074,28 @@ async def export_arrears_pdf(current_user: Annotated[dict, Depends(get_current_u
     
     title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
     
-    # --- Header ---
+    # --- Header with Logo ---
     school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
     if not school: school = {"nama_sekolah": "SMK MEKAR MURNI", "alamat": "Jl. Pendidikan No. 123", "no_telp": "-"}
     h_style = ParagraphStyle('RepHeader', fontSize=14, fontName='Helvetica-Bold', alignment=TA_CENTER)
     a_style = ParagraphStyle('RepAddr', fontSize=10, fontName='Helvetica', alignment=TA_CENTER)
     
-    elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
-    elements.append(Paragraph(school['alamat'], a_style))
+    logo_path = uploads_dir / "logo.png"
+    if logo_path.exists():
+        logo_img = Image(str(logo_path), width=0.8*inch, height=0.8*inch)
+        school_info = [
+            [Paragraph(school['nama_sekolah'].upper(), h_style)],
+            [Paragraph(school['alamat'], a_style)],
+            [Paragraph(f"Telp: {school['no_telp']}", a_style)]
+        ]
+        info_table = Table(school_info, colWidths=[5*inch])
+        header_table = Table([[logo_img, info_table]], colWidths=[1*inch, 5.5*inch])
+        header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        elements.append(header_table)
+    else:
+        elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
+        elements.append(Paragraph(school['alamat'], a_style))
+    
     elements.append(Spacer(1, 0.1*inch))
     elements.append(Paragraph("-" * 95, a_style))
     elements.append(Spacer(1, 0.2*inch))
@@ -2150,14 +2169,28 @@ async def export_class_recap_pdf(current_user: Annotated[dict, Depends(get_curre
     
     title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, alignment=TA_CENTER, spaceAfter=20)
     
-    # --- Header ---
+    # --- Header with Logo ---
     school = await db.school_profile.find_one({"id": "main_profile"}, {"_id": 0})
     if not school: school = {"nama_sekolah": "SMK MEKAR MURNI", "alamat": "Jl. Pendidikan No. 123", "no_telp": "-"}
     h_style = ParagraphStyle('RepHeader', fontSize=14, fontName='Helvetica-Bold', alignment=TA_CENTER)
     a_style = ParagraphStyle('RepAddr', fontSize=10, fontName='Helvetica', alignment=TA_CENTER)
     
-    elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
-    elements.append(Paragraph(school['alamat'], a_style))
+    logo_path = uploads_dir / "logo.png"
+    if logo_path.exists():
+        logo_img = Image(str(logo_path), width=0.8*inch, height=0.8*inch)
+        school_info = [
+            [Paragraph(school['nama_sekolah'].upper(), h_style)],
+            [Paragraph(school['alamat'], a_style)],
+            [Paragraph(f"Telp: {school['no_telp']}", a_style)]
+        ]
+        info_table = Table(school_info, colWidths=[5*inch])
+        header_table = Table([[logo_img, info_table]], colWidths=[1*inch, 5.5*inch])
+        header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        elements.append(header_table)
+    else:
+        elements.append(Paragraph(school['nama_sekolah'].upper(), h_style))
+        elements.append(Paragraph(school['alamat'], a_style))
+    
     elements.append(Spacer(1, 0.1*inch))
     elements.append(Paragraph("-" * 95, a_style))
     elements.append(Spacer(1, 0.2*inch))
