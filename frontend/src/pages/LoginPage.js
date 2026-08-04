@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext } from "react";
 import { AuthContext, API } from "../App";
 import axios from "axios";
 import { toast } from "sonner";
+import NgrokImage from "../components/NgrokImage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,14 +44,10 @@ const LoginPage = () => {
       <Card data-testid="login-card" className="w-full max-w-md relative z-10 shadow-2xl border-0 backdrop-blur-sm bg-white/90">
         <CardHeader className="text-center space-y-4 pb-8">
           <div className="mx-auto w-24 h-24 bg-white rounded-2xl flex items-center justify-center shadow-lg transform hover:scale-105 transition-transform p-3">
-            <img
+            <NgrokImage
               src={logoUrl}
               alt="Logo"
               className="w-full h-full object-contain"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = 'https://ui-avatars.com/api/?name=SMK&background=fff&color=1e3a8a';
-              }}
             />
           </div>
           <div>
@@ -105,14 +102,7 @@ const LoginPage = () => {
             </Button>
           </form>
 
-          <div className="mt-8 p-4 bg-blue-50 rounded-lg border border-blue-100">
-            <p className="text-xs text-gray-600 text-center">
-              <strong>Demo Accounts:</strong><br />
-              Master: master/master123<br />
-              Admin: admin/admin123<br />
-              Kepsek: kepsek/kepsek123
-            </p>
-          </div>
+
         </CardContent>
       </Card>
 

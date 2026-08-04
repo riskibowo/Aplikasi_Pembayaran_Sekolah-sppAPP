@@ -267,6 +267,7 @@ const AdminStudents = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12">No</TableHead>
                     <TableHead>NIS</TableHead>
                     <TableHead>Nama</TableHead>
                     <TableHead>Kelas</TableHead>
@@ -280,13 +281,14 @@ const AdminStudents = () => {
                 <TableBody>
                   {filteredStudents.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-gray-500">
+                      <TableCell colSpan={9} className="text-center py-8 text-gray-500">
                         Tidak ada data siswa
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredStudents.map((student) => (
+                    filteredStudents.map((student, index) => (
                       <TableRow key={student.id} data-testid={`student-row-${student.nis}`}>
+                        <TableCell className="font-medium">{index + 1}</TableCell>
                         <TableCell className="font-medium">{student.nis}</TableCell>
                         <TableCell>{student.nama}</TableCell>
                         <TableCell>

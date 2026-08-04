@@ -5,9 +5,12 @@ import { Button } from '@/components/ui/button';
 import { 
   School, LayoutDashboard, Users, FileText, LogOut, User, 
   CreditCard, History, GraduationCap, Settings, ShieldCheck, 
-  Activity, Menu, X 
+  Activity, Menu, X, Database 
 } from 'lucide-react';
 import axios from 'axios';
+import UserAvatar from './UserAvatar';
+
+import NgrokImage from './NgrokImage';
 
 const Layout = ({ children }) => {
   const { user, logout } = useContext(AuthContext);
@@ -45,6 +48,7 @@ const Layout = ({ children }) => {
         { path: '/master/profile', label: 'Profil Saya', icon: User },
         { path: '/master/staff', label: 'Kelola Staf', icon: ShieldCheck },
         { path: '/master/login-traffic', label: 'Monitoring Login', icon: Activity },
+        { path: '/master/backup', label: 'Backup Sistem', icon: Database },
       ];
     } else if (user.role === 'kepsek') {
       return [
@@ -94,11 +98,8 @@ const Layout = ({ children }) => {
             {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
           <div className="flex items-center space-x-2">
-             <div className="w-8 h-8 bg-blue-900 rounded-lg flex items-center justify-center overflow-hidden p-1 shadow-inner">
-                <img src={logoUrl} alt="Logo" className="w-full h-full object-contain filter invert brightness-0 invert-100" onError={(e) => {
-                  e.target.onerror = null;
-                  e.target.src = 'https://ui-avatars.com/api/?name=SMK&background=fff&color=1e3a8a';
-                }} />
+              <div className="flex-shrink-0 flex items-center justify-center p-4">
+                <NgrokImage src={logoUrl} alt="Logo" className="w-full h-full object-contain filter invert brightness-0 invert-100" />
               </div>
               <h1 className="text-lg font-bold text-blue-900 truncate max-w-[150px]" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
                 SPP System
@@ -107,15 +108,13 @@ const Layout = ({ children }) => {
         </div>
         
         <div className="flex items-center space-x-3">
-          <div className="w-9 h-9 rounded-full bg-blue-100 border-2 border-blue-200 overflow-hidden" onClick={() => navigate('/siswa/profile')}>
-            {profileImageUrl ? (
-              <img src={profileImageUrl} alt="User" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-blue-900">
-                <User className="w-5 h-5" />
-              </div>
-            )}
-          </div>
+          <UserAvatar
+            src={profileImageUrl}
+            name={profile?.nama || user?.nama}
+            className="w-9 h-9 rounded-full border-2 border-blue-200 cursor-pointer"
+            textClassName="text-xs text-white"
+            onClick={() => navigate('/siswa/profile')}
+          />
         </div>
       </header>
 
@@ -131,11 +130,8 @@ const Layout = ({ children }) => {
       <aside className={`fixed left-0 top-0 h-full w-64 bg-gradient-to-b from-blue-900 to-indigo-900 text-white shadow-2xl z-[80] transition-transform duration-300 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="p-6 border-b border-white/10 flex justify-between items-center">
           <div className="flex items-center space-x-3">
-            <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center overflow-hidden p-1 shadow-inner">
-              <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = 'https://ui-avatars.com/api/?name=SMK&background=fff&color=1e3a8a';
-              }} />
+            <div className="flex-shrink-0 flex items-center justify-center p-4 border-b border-gray-100/50 h-20">
+              <NgrokImage src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
             </div>
             <div>
               <h1 className="text-lg font-bold" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>SPP System</h1>
@@ -149,13 +145,12 @@ const Layout = ({ children }) => {
 
         <div className="p-4 flex flex-col h-[calc(100%-88px)]">
           <div className="mb-6 p-4 bg-white/5 backdrop-blur-sm rounded-xl border border-white/10 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center overflow-hidden border border-white/20">
-              {profileImageUrl ? (
-                <img src={profileImageUrl} alt="User" className="w-full h-full object-cover" />
-              ) : (
-                <User className="w-5 h-5 text-blue-200" />
-              )}
-            </div>
+            <UserAvatar
+              src={profileImageUrl}
+              name={profile?.nama || user?.nama}
+              className="w-10 h-10 rounded-full border border-white/20 flex-shrink-0"
+              textClassName="text-xs text-white"
+            />
             <div className="overflow-hidden">
               <p className="font-semibold text-sm truncate">{user.nama}</p>
               <p className="text-[10px] text-blue-300 uppercase tracking-wider">{user.role}</p>

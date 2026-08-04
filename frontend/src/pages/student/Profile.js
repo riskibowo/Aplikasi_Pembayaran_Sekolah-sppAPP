@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import UserAvatar from '../../components/UserAvatar';
 
 const UserProfile = () => {
   const { user } = useContext(AuthContext);
@@ -129,29 +130,80 @@ const UserProfile = () => {
         </div>
 
         <div className="max-w-4xl grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Card Foto */}
-          <Card className="border-0 shadow-lg overflow-hidden h-fit">
-            <CardHeader className="bg-gradient-to-r from-blue-900 to-indigo-700 h-24 relative">
-            </CardHeader>
-            <CardContent className="flex flex-col items-center -mt-12 pb-8">
-              <div className="relative group">
-                <div className="w-24 h-24 bg-white rounded-full p-1 shadow-xl border-4 border-white overflow-hidden flex items-center justify-center bg-gray-100">
-                  {profileImageUrl ? (
-                    <img src={profileImageUrl} alt="Profile" className="w-full h-full object-cover" />
-                  ) : (
-                    <User className="w-12 h-12 text-gray-400" />
-                  )}
+          {/* Card Foto / ID Card Digital */}
+          <Card className="border-0 shadow-2xl overflow-hidden h-fit bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900 text-white relative rounded-2xl">
+            {/* Background pattern/glass effect */}
+            <div className="absolute inset-0 bg-white/5 backdrop-blur-3xl"></div>
+            <div className="absolute top-0 right-0 -mt-10 -mr-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
+            <div className="absolute bottom-0 left-0 -mb-10 -ml-10 w-40 h-40 bg-blue-500/20 rounded-full blur-3xl"></div>
+            
+            <CardContent className="relative z-10 p-6 flex flex-col items-center">
+              {/* Header ID Card */}
+              <div className="w-full flex justify-between items-start mb-6">
+                <div className="flex items-center space-x-2">
+                  <div className="bg-white/20 p-2 rounded-lg backdrop-blur-sm shadow-inner">
+                    {(profile?.role || user?.role) === 'siswa' ? (
+                      <GraduationCap className="w-6 h-6 text-white" />
+                    ) : (
+                      <IdCard className="w-6 h-6 text-white" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm tracking-wider uppercase text-white">
+                      {(profile?.role || user?.role) === 'siswa' ? 'Kartu Pelajar' : 'Kartu Pegawai'}
+                    </h4>
+                    <p className="text-[10px] text-blue-200">Sistem Pembayaran Sekolah</p>
+                  </div>
                 </div>
-                <label className="absolute bottom-0 right-0 w-8 h-8 bg-blue-600 hover:bg-blue-700 text-white rounded-full flex items-center justify-center cursor-pointer shadow-lg border-2 border-white transition-all transform group-hover:scale-110">
-                  <Camera className="w-4 h-4" />
+                {(profile?.role || user?.role) === 'siswa' && (
+                  <div className="text-right bg-white/10 px-3 py-1 rounded-lg backdrop-blur-sm border border-white/20">
+                    <p className="text-[10px] text-blue-200 uppercase tracking-widest">Angkatan</p>
+                    <p className="font-bold text-sm text-white">{profile?.angkatan || '-'}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Photo */}
+              <div className="relative group mb-4">
+                <UserAvatar
+                  src={profileImageUrl}
+                  name={profile?.nama || user?.nama}
+                  className="w-32 h-32 bg-white/10 rounded-2xl shadow-2xl border border-white/30 backdrop-blur-sm"
+                  textClassName="text-4xl font-bold text-white"
+                />
+                <label className="absolute -bottom-3 -right-3 w-10 h-10 bg-blue-500 hover:bg-blue-400 text-white rounded-full flex items-center justify-center cursor-pointer shadow-lg border-2 border-white transition-all transform group-hover:scale-110 z-20">
+                  <Camera className="w-5 h-5" />
                   <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} disabled={uploading} />
                 </label>
               </div>
-              <h3 className="mt-4 font-bold text-lg text-gray-900">{profile?.nama}</h3>
-              <p className="text-sm text-gray-500 capitalize">{profile?.role || user.role}</p>
+
+              {/* Student Info */}
+              <div className="text-center w-full mb-6">
+                <h3 className="font-bold text-xl text-white mb-1 drop-shadow-md">{profile?.nama}</h3>
+                <div className="inline-block bg-white/20 px-4 py-1 rounded-full backdrop-blur-sm border border-white/20 shadow-inner">
+                  <p className="text-xs text-white uppercase tracking-wider font-medium">{profile?.role || user.role}</p>
+                </div>
+              </div>
+
+              {/* QR Code and NIS */}
+              <div className="w-full flex items-center justify-between bg-white/10 p-4 rounded-xl backdrop-blur-md border border-white/20 shadow-lg mt-2">
+                <div>
+                  <p className="text-[10px] text-blue-200 uppercase tracking-widest mb-1">
+                    {(profile?.role || user?.role) === 'siswa' ? 'Nomor Induk (NIS)' : 'ID Pengguna'}
+                  </p>
+                  <p className="font-mono text-lg font-bold tracking-widest text-white">{profile?.nis || profile?.id?.substring(0, 8)}</p>
+                </div>
+                <div className="bg-white p-2 rounded-xl shadow-inner transform transition-transform hover:scale-110">
+                  <img 
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=${profile?.nis || profile?.id?.substring(0, 8)}`} 
+                    alt="QR Code" 
+                    className="w-12 h-12"
+                  />
+                </div>
+              </div>
 
               {uploading && (
-                <div className="mt-2 text-xs text-blue-600 animate-pulse">Mengunggah...</div>
+                <div className="mt-4 text-xs text-white/70 animate-pulse bg-white/10 px-3 py-1 rounded-full">Mengunggah foto...</div>
               )}
             </CardContent>
           </Card>

@@ -1697,7 +1697,7 @@ async def export_pdf(bulan: str, tahun: int, status: Optional[str] = None, curre
         elements.append(Paragraph(school['alamat'], a_style))
     
     elements.append(Spacer(1, 0.1*inch))
-    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Paragraph("-" * 120, a_style))
     elements.append(Spacer(1, 0.2*inch))
     
     # Title
@@ -1735,7 +1735,7 @@ async def export_pdf(bulan: str, tahun: int, status: Optional[str] = None, curre
     data.append(['', '', '', '', 'Total:', f"Rp {total_jumlah:,.0f}", ''])
     
     # Create table
-    table = Table(data, colWidths=[0.4*inch, 0.8*inch, 1.8*inch, 0.8*inch, 1*inch, 1.2*inch, 1*inch])
+    table = Table(data, colWidths=[0.4*inch, 1.3*inch, 1.8*inch, 0.7*inch, 0.9*inch, 1.2*inch, 1.0*inch])
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a8a')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -1829,7 +1829,7 @@ async def export_student_pdf(student_id: str, status: Optional[str] = None, curr
         elements.append(Paragraph(school['alamat'], a_style))
     
     elements.append(Spacer(1, 0.1*inch))
-    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Paragraph("-" * 120, a_style))
     elements.append(Spacer(1, 0.2*inch))
     
     status_text = f" ({status.upper()})" if status else ""
@@ -1902,7 +1902,7 @@ async def export_class_pdf(class_name: str, current_user: Annotated[dict, Depend
         elements.append(Paragraph(school['alamat'], a_style))
     
     elements.append(Spacer(1, 0.1*inch))
-    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Paragraph("-" * 120, a_style))
     elements.append(Spacer(1, 0.2*inch))
     
     elements.append(Paragraph(f"LAPORAN PEMBAYARAN KELAS {class_name}", title_style))
@@ -1968,7 +1968,7 @@ async def export_batch_pdf(batch: str, current_user: Annotated[dict, Depends(get
         elements.append(Paragraph(school['alamat'], a_style))
     
     elements.append(Spacer(1, 0.1*inch))
-    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Paragraph("-" * 120, a_style))
     elements.append(Spacer(1, 0.2*inch))
     
     elements.append(Paragraph(f"LAPORAN PEMBAYARAN ANGKATAN {batch}", title_style))
@@ -2097,7 +2097,7 @@ async def export_arrears_pdf(current_user: Annotated[dict, Depends(get_current_u
         elements.append(Paragraph(school['alamat'], a_style))
     
     elements.append(Spacer(1, 0.1*inch))
-    elements.append(Paragraph("-" * 95, a_style))
+    elements.append(Paragraph("-" * 120, a_style))
     elements.append(Spacer(1, 0.2*inch))
     
     elements.append(Paragraph(f"LAPORAN TUNGGAKAN SISWA", title_style))
@@ -2346,21 +2346,22 @@ async def upload_profile_photo(file: UploadFile = File(...), current_user: Annot
     filename = f"profile_{current_user['user_id']}_{uuid.uuid4().hex}{ext}"
     file_path = profiles_dir / filename
     
-    # Save the file to Google Drive
+    # Simpan ke penyimpanan lokal (fallback karena token Drive expired)
     try:
         content = await file.read()
-        file_id, _ = upload_to_drive(content, filename, file.content_type)
+        with open(file_path, "wb") as f:
+            f.write(content)
         
-        # Simpan URL proxy backend kita sendiri, bukan link Drive langsung
-        photo_url = f"/api/profile/photo/{file_id}"
+        # URL menuju file lokal
+        photo_url = f"/uploads/profiles/{filename}"
         
         # Update DB
         if current_user['role'] == "siswa":
-            await db.students.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url, "drive_photo_id": file_id}})
+            await db.students.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url}, "$unset": {"drive_photo_id": ""}})
         else:
-            await db.users.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url, "drive_photo_id": file_id}})
+            await db.users.update_one({"id": current_user['user_id']}, {"$set": {"profile_pic": photo_url}, "$unset": {"drive_photo_id": ""}})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal mengunggah foto ke Google Drive: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Gagal menyimpan foto profil: {str(e)}")
     
     await log_activity(current_user['username'], current_user['role'], "profile", "Mengunggah foto profil")
         
@@ -2410,6 +2411,195 @@ async def change_my_password(request: ChangePasswordRequest, current_user: Annot
     await log_activity(current_user['username'], current_user['role'], "profile", "Mengubah password")
     
     return {"message": "Password berhasil diubah"}
+
+@api_router.get("/system/backup")
+async def system_backup(current_user: Annotated[dict, Depends(get_current_user)]):
+    if current_user.get("role") != "master":
+        raise HTTPException(status_code=403, detail="Akses ditolak. Hanya Admin Master yang dapat mem-backup sistem.")
+    
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    elements = []
+    styles = getSampleStyleSheet()
+    title_style = styles['Heading1']
+    title_style.alignment = TA_CENTER
+    normal_style = styles['Normal']
+    
+    elements.append(Paragraph("Laporan Backup Data Sistem", title_style))
+    elements.append(Spacer(1, 12))
+    timestamp_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    elements.append(Paragraph(f"Tanggal Backup: {timestamp_str}", normal_style))
+    elements.append(Spacer(1, 24))
+    
+    # --- Data Pengguna ---
+    elements.append(Paragraph("1. Data Pengguna (Users)", styles['Heading2']))
+    users = await db.users.find({}).to_list(None)
+    if users:
+        data = [["No", "Username", "Role", "Nama Lengkap", "Password"]]
+        for i, u in enumerate(users, 1):
+            pwd = u.get("password", "")
+            pwd_short = pwd[:15] + "..." if len(pwd) > 15 else pwd
+            data.append([str(i), u.get("username", ""), u.get("role", ""), u.get("nama_lengkap", ""), pwd_short])
+        
+        t = Table(data, colWidths=[30, 80, 60, 120, 150])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+        ]))
+        elements.append(t)
+    else:
+        elements.append(Paragraph("Tidak ada data pengguna.", normal_style))
+    elements.append(Spacer(1, 20))
+    
+    # --- Data Kelas ---
+    elements.append(Paragraph("2. Data Kelas", styles['Heading2']))
+    classes = await db.classes.find({}).to_list(None)
+    if classes:
+        data = [["No", "Nama Kelas", "Wali Kelas", "Tingkat"]]
+        for i, c in enumerate(classes, 1):
+            data.append([str(i), c.get("nama_kelas", ""), c.get("wali_kelas", ""), c.get("tingkat", "")])
+            
+        t = Table(data, colWidths=[30, 100, 150, 100])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+        ]))
+        elements.append(t)
+    else:
+        elements.append(Paragraph("Tidak ada data kelas.", normal_style))
+    elements.append(Spacer(1, 20))
+        
+    # --- Data Siswa ---
+    elements.append(Paragraph("3. Data Siswa", styles['Heading2']))
+    students = await db.students.find({}).to_list(100) # Limit to 100 to prevent huge PDF
+    if students:
+        data = [["No", "NISN", "Nama", "Kelas", "Password"]]
+        for i, s in enumerate(students, 1):
+            pwd = s.get("password", "")
+            pwd_short = pwd[:15] + "..." if len(pwd) > 15 else pwd
+            data.append([str(i), s.get("username", ""), s.get("nama", ""), s.get("kelas", ""), pwd_short])
+            
+        t = Table(data, colWidths=[30, 80, 150, 60, 120])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+        ]))
+        elements.append(t)
+        if len(students) == 100:
+             elements.append(Paragraph("*Hanya menampilkan 100 siswa pertama untuk efisiensi laporan cetak.", normal_style))
+    else:
+        elements.append(Paragraph("Tidak ada data siswa.", normal_style))
+    elements.append(Spacer(1, 20))
+
+    # --- Data Tagihan ---
+    elements.append(Paragraph("4. Data Tagihan (Bills)", styles['Heading2']))
+    bills = await db.bills.find({}).sort("created_at", -1).to_list(100)
+    if bills:
+        data = [["No", "ID Siswa", "Bulan/Thn", "Jumlah", "Status"]]
+        for i, b in enumerate(bills, 1):
+            id_siswa_short = b.get("id_siswa", "")[:8] + "..." if len(b.get("id_siswa", "")) > 8 else b.get("id_siswa", "")
+            status = b.get("status", "")
+            if status == "menunggu_konfirmasi":
+                status = "Pending"
+            data.append([str(i), id_siswa_short, f"{b.get('bulan', '')} {b.get('tahun', '')}", str(b.get("jumlah", 0)), status])
+            
+        t = Table(data, colWidths=[30, 100, 100, 100, 100])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+        ]))
+        elements.append(t)
+        if len(bills) == 100:
+             elements.append(Paragraph("*Hanya menampilkan 100 tagihan terbaru.", normal_style))
+    else:
+        elements.append(Paragraph("Tidak ada data tagihan.", normal_style))
+    elements.append(Spacer(1, 20))
+
+    # --- Data Pembayaran ---
+    elements.append(Paragraph("5. Data Pembayaran (Payments)", styles['Heading2']))
+    payments = await db.payments.find({}).sort("tanggal_bayar", -1).to_list(100)
+    if payments:
+        data = [["No", "ID Tagihan", "Jumlah", "Status", "Tgl Bayar"]]
+        for i, p in enumerate(payments, 1):
+            tgl = p.get("tanggal_bayar", "")
+            tgl_short = tgl[:10] if isinstance(tgl, str) else str(tgl)[:10]
+            id_tag_short = p.get("id_tagihan", "")[:8] + "..." if len(p.get("id_tagihan", "")) > 8 else p.get("id_tagihan", "")
+            status = p.get("status", "")
+            if status == "menunggu_konfirmasi":
+                status = "Pending"
+            data.append([str(i), id_tag_short, str(p.get("jumlah", 0)), status, tgl_short])
+            
+        t = Table(data, colWidths=[30, 100, 100, 100, 100])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+        ]))
+        elements.append(t)
+        if len(payments) == 100:
+             elements.append(Paragraph("*Hanya menampilkan 100 pembayaran terbaru.", normal_style))
+    else:
+        elements.append(Paragraph("Tidak ada data pembayaran.", normal_style))
+    elements.append(Spacer(1, 20))
+
+    # --- Summary ---
+    elements.append(Paragraph("6. Ringkasan Tagihan & Keuangan", styles['Heading2']))
+    total_bills = await db.bills.count_documents({})
+    paid_bills = await db.bills.count_documents({"status": "lunas"})
+    pending_bills = await db.bills.count_documents({"status": "pending"})
+    unpaid_bills = await db.bills.count_documents({"status": "belum"})
+    
+    summary_data = [
+        ["Total Tagihan Dibuat", str(total_bills)],
+        ["Tagihan Sudah Dibayar (Lunas)", str(paid_bills)],
+        ["Tagihan Belum Dibayar (Belum)", str(unpaid_bills)],
+        ["Tagihan Menunggu Konfirmasi (Pending)", str(pending_bills)]
+    ]
+    t_summary = Table(summary_data, colWidths=[250, 100])
+    t_summary.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 1, colors.black),
+        ('BACKGROUND', (0,0), (0,-1), colors.lightgrey),
+        ('PADDING', (0,0), (-1,-1), 6),
+    ]))
+    elements.append(t_summary)
+    
+    doc.build(elements)
+    
+    pdf_content = buffer.getvalue()
+    buffer.close()
+    
+    file_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"backup_laporan_sppAPP_{file_timestamp}.pdf"
+    
+    return StreamingResponse(
+        iter([pdf_content]), 
+        media_type="application/pdf", 
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 # Include the router in the main app
 app.include_router(api_router)

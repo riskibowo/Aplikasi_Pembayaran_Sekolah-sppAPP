@@ -124,34 +124,39 @@ const AdminBills = () => {
   };
 
   // Filter Logic
-  const filteredBills = bills.filter((bill) => {
+  // 1. Base filter based on Search, Class, Month, Year (used for status summary metrics)
+  const filteredBillsBase = bills.filter((bill) => {
     const namaSiswa = bill.siswa?.nama || '';
     const nisSiswa = bill.siswa?.nis || '';
     const matchesSearch = 
       namaSiswa.toLowerCase().includes(searchTerm.toLowerCase()) ||
       nisSiswa.includes(searchTerm);
 
-    const matchesStatus = filterStatus === 'all' || bill.status === filterStatus;
     const matchesClass = filterClass === 'all' || bill.siswa?.kelas === filterClass;
     const matchesMonth = filterMonth === 'all' || bill.bulan === filterMonth;
     const matchesYear = filterYear === 'all' || bill.tahun.toString() === filterYear;
 
-    return matchesSearch && matchesStatus && matchesClass && matchesMonth && matchesYear;
+    return matchesSearch && matchesClass && matchesMonth && matchesYear;
   });
 
-  // Calculate Metrics from all bills
-  const totalBillsCount = bills.length;
-  const totalBillsAmount = bills.reduce((sum, b) => sum + b.jumlah, 0);
+  // 2. Full filter including status (used for table display)
+  const filteredBills = filteredBillsBase.filter((bill) => {
+    return filterStatus === 'all' || bill.status === filterStatus;
+  });
 
-  const lunasBills = bills.filter(b => b.status === 'lunas');
+  // Calculate Metrics from filtered base bills (filtered by search, class, month, year)
+  const totalBillsCount = filteredBillsBase.length;
+  const totalBillsAmount = filteredBillsBase.reduce((sum, b) => sum + b.jumlah, 0);
+
+  const lunasBills = filteredBillsBase.filter(b => b.status === 'lunas');
   const lunasCount = lunasBills.length;
   const lunasAmount = lunasBills.reduce((sum, b) => sum + b.jumlah, 0);
 
-  const pendingBills = bills.filter(b => b.status === 'menunggu_konfirmasi');
+  const pendingBills = filteredBillsBase.filter(b => b.status === 'menunggu_konfirmasi');
   const pendingCount = pendingBills.length;
   const pendingAmount = pendingBills.reduce((sum, b) => sum + b.jumlah, 0);
 
-  const unpaidBills = bills.filter(b => b.status === 'belum');
+  const unpaidBills = filteredBillsBase.filter(b => b.status === 'belum');
   const unpaidCount = unpaidBills.length;
   const unpaidAmount = unpaidBills.reduce((sum, b) => sum + b.jumlah, 0);
 
@@ -523,11 +528,11 @@ const AdminBills = () => {
 
         {/* Preview Dialog */}
         <Dialog open={showPreview} onOpenChange={() => { setShowPreview(false); if (previewUrl) { window.URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } }}>
-          <DialogContent className="sm:max-w-3xl w-full h-[80vh]">
+          <DialogContent className="sm:max-w-3xl w-full flex flex-col max-h-[90vh]">
             <DialogHeader>
               <DialogTitle>Bukti Pembayaran</DialogTitle>
             </DialogHeader>
-            <div className="h-[70vh] flex items-center justify-center bg-gray-100 rounded-md overflow-hidden">
+            <div className="flex-1 flex items-center justify-center bg-gray-100 rounded-md overflow-hidden min-h-0 p-2">
               {previewUrl ? (
                 previewType && previewType.startsWith('image/') ? (
                   <img

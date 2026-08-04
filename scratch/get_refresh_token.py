@@ -32,9 +32,9 @@ def main():
     }
     
     try:
-        # Menjalankan local server di port 8085
+        # Menjalankan local server di port bebas (open_browser=True agar otomatis membuka browser)
         flow = InstalledAppFlow.from_client_config(client_config, scopes=SCOPES)
-        creds = flow.run_local_server(port=8085, prompt='consent', access_type='offline', open_browser=False)
+        creds = flow.run_local_server(port=8089, prompt='consent', access_type='offline', open_browser=True)
         
         if not creds.refresh_token:
             print("\nPERINGATAN: Refresh token tidak didapatkan. Hal ini biasanya terjadi jika aplikasi sudah pernah diotorisasi.")

@@ -26,6 +26,7 @@ import StudentPayments from "./pages/student/Payments";
 import MasterDashboard from "./pages/master/Dashboard";
 import StaffManagement from "./pages/master/StaffManagement";
 import LoginTraffic from "./pages/master/LoginTraffic";
+import SystemBackup from "./pages/master/SystemBackup";
 
 // WebSocket Hook
 import useWebSocket from "./hooks/useWebSocket";
@@ -41,9 +42,26 @@ axios.interceptors.request.use(
     if (tokenData) {
       config.headers.Authorization = `Bearer ${tokenData}`;
     }
+    // Add header to bypass ngrok browser warning
+    config.headers["ngrok-skip-browser-warning"] = "69420";
     return config;
   },
   (error) => Promise.reject(error)
+);
+
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      // Redirect to login if not already there
+      if (window.location.pathname !== '/') {
+        window.location.href = '/';
+      }
+    }
+    return Promise.reject(error);
+  }
 );
 
 // Auth Context
@@ -122,6 +140,7 @@ function App() {
             <Route path="/master/dashboard" element={user?.role === "master" ? <MasterDashboard /> : <Navigate to="/" />} />
             <Route path="/master/staff" element={user?.role === "master" ? <StaffManagement /> : <Navigate to="/" />} />
             <Route path="/master/login-traffic" element={user?.role === "master" ? <LoginTraffic /> : <Navigate to="/" />} />
+            <Route path="/master/backup" element={user?.role === "master" ? <SystemBackup /> : <Navigate to="/" />} />
 
             {/* Admin Settings Route (Now separated from master section in route list, but logically admin) */}
             <Route path="/admin/settings" element={user?.role === "admin" ? <SchoolSettings /> : <Navigate to="/" />} />

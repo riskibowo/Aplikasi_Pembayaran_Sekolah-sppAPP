@@ -62,8 +62,8 @@ const StudentBills = () => {
         id_tagihan: selectedBill.id,
         id_siswa: user.id,
         jumlah: selectedBill.jumlah,
-        nama_pengirim: senderName, // Kirim ke backend
-        bank_asal: bankName        // Kirim ke backend
+        nama_pengirim: "-", // Pembayaran Langsung
+        bank_asal: "-"      // Pembayaran Langsung
       });
 
       const paymentId = resp.data.id;
@@ -77,7 +77,7 @@ const StudentBills = () => {
         });
       }
 
-      toast.success('Pembayaran berhasil dikirim. Menunggu verifikasi admin.');
+      toast.success('Pembayaran berhasil dikirim. Menunggu verifikasi admin (Harap serahkan uang tunai ke TU).');
       setShowPayment(false);
       fetchBills();
     } catch (error) {
@@ -341,36 +341,9 @@ const StudentBills = () => {
 
               {/* Input Data Pengirim */}
               <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="sender">Nama Pemilik Rekening</Label>
-                  <Input
-                    id="sender"
-                    type="text"
-                    placeholder="Contoh: Budi Santoso (Ayah)"
-                    value={senderName}
-                    onChange={(e) => setSenderName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="bank">Bank Asal</Label>
-                  <Input
-                    id="bank"
-                    type="text"
-                    placeholder="Contoh: BRI / Dana / BCA"
-                    value={bankName}
-                    onChange={(e) => setBankName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="receipt">Upload Bukti Transfer</Label>
-                  <Input
-                    id="receipt"
-                    type="file"
-                    accept="image/*,application/pdf" // Izinkan Gambar dan PDF
-                    onChange={(e) => setReceiptFile(e.target.files[0])}
-                    className="cursor-pointer"
-                  />
-                  <p className="text-xs text-gray-500">Format: JPG, PNG, atau PDF. Pastikan foto jelas.</p>
+                <div className="p-3 bg-yellow-50 text-yellow-800 rounded-lg border border-yellow-200 text-sm">
+                  <strong>Pemberitahuan:</strong> Pembayaran dilakukan secara tunai/langsung. 
+                  Silakan serahkan uang langsung ke loket Tata Usaha sekolah setelah menekan tombol konfirmasi.
                 </div>
               </div>
             </div>
@@ -384,7 +357,7 @@ const StudentBills = () => {
               onClick={confirmPayment}
               className="bg-blue-900 hover:bg-blue-800"
             >
-              Konfirmasi Pembayaran
+              Konfirmasi Bayar Tunai
             </Button>
           </DialogFooter>
         </DialogContent>
